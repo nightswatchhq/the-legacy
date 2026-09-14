@@ -1,0 +1,21 @@
+/target
+**/target/
+**/*.rs.bk
+.env
+.DS_Store
+
+# Scratch from builds and background jobs, at the repo root only. Anchored deliberately: a bare
+# *.log would also untrack any measurement artefact we later commit under docs/.
+/*.err
+/*.out
+/*.log
+
+# Alternate build trees from CARGO_TARGET_DIR=target-<something>, which is how two agents avoid
+# serving each other a stale binary out of one shared target dir.
+/target-*/
+
+# Relic data. Never committed - the corpus lives in object storage and is addressed by hash.
+/relics/
+*.parquet
+*.roaring
+*.sidecar
