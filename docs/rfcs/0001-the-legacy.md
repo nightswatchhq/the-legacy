@@ -707,8 +707,9 @@ checkpoint, era1 accumulator or finality check.
 `--after <manifest>` provides predecessor pact context for a continuation. Its table files are
 not checked unless they are part of the requested manifest run. The report names that scope.
 Transaction envelope semantics (including raw/structured agreement and transaction hashes) and
-signature validity/sender recovery are separately reported as **not checked**. Receipt derived
-fields still report **not checked** under `receipt_consistency`.
+signature validity/sender recovery are separately reported as **not checked**. Receipt fees
+and other derived fields still report **not checked** under `receipt_consistency`.
+Execution gas accounting has its own `receipt_gas` result.
 Other table completeness, consensus rules, transaction/receipt/withdrawal roots, era1
 accumulators, finality, index correctness, producer signatures and checkpoint anchoring remain
 unimplemented. The example in §10.6 is the intended full report, not current executable output.
@@ -730,19 +731,29 @@ After the file checks, the cleaner compares available tables within each request
   bloom reconstruction: it runs even if logs are absent, in which case `receipt_blooms` remains
   unchecked. Header hashes and checkpoint trust retain their separate reported status.
 
-Each check runs whenever both of its tables are listed, independently of the other checks. A
-missing table reports **not checked**, never an assumed empty table. Present empty tables may
+- `receipt_gas` (chain ID 1 only): receipt indices must start at zero and be contiguous within
+  each supplied block. Cumulative execution gas must not decrease. Present `gas_used` must equal
+  the difference from the previous cumulative total, starting from zero per block; null remains
+  absent and is not materialized. The last cumulative total (zero without receipts) must equal
+  header `gas_used`, and header `gas_used` must not exceed `gas_limit`. Every receipt must have
+  a supplied header. Subtraction is checked rather than wrapping. This is arithmetic consistency,
+  not execution validation: zero deltas, transaction gas limits, intrinsic gas, fee calculations
+  and blob gas rules are not validated. Other chain IDs report an unsupported gas profile.
+
+Each check runs when its tables and any stated chain profile are available, independently of
+the other checks. A missing table reports **not checked**, never an assumed empty table. Present empty tables may
 pass. JSON `relic_checks` and the prose report name each relic's results. Aggregate status is
 **pass** only when every requested relic passed that check, **partial** when some passed and
-others lacked tables, and **not checked** when none ran. Manifest-only mode checks none of these.
+others lacked prerequisites, and **not checked** when none ran. Manifest-only mode checks none of these.
 A mismatch fails the whole run before any success report is printed.
 
 These checks prove agreement among supplied rows, not completeness, transaction authenticity or
 correct execution. Deleting a transaction and its receipt together (and any associated logs)
-can still pass; transaction indices need not be contiguous. Blooms do not cover log data,
+can still pass. The generic table codecs permit slices; only the Ethereum whole-block gas
+check additionally requires contiguous receipt indices. Blooms do not cover log data,
 ordering or multiplicity, and collisions can conceal changes to addresses/topics. Matching a
 bloom does not prove log completeness. Neither comparison authenticates the header or receipt
-set. Derived gas/fees, log payload correctness and trie roots remain unchecked. The typed table codecs remain usable
+set. Fees and other derived fields, log payload correctness and trie roots remain unchecked. The typed table codecs remain usable
 on independent slices; these relationships are enforced by the cleaner when counterparts exist.
 
 The file checker retains decoded headers, transactions, receipts and logs for one relic until

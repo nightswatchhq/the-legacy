@@ -246,3 +246,74 @@ fn header_bloom_api_checks_order_and_shape_before_merging() {
     receipt.status = Some(2);
     assert!(header_blooms(&[header(8192)], &[receipt]).is_err());
 }
+
+#[test]
+fn ethereum_gas_resets_per_block_and_checks_optional_gas_used() {
+    let mut first = receipt_row();
+    first.transaction_index = 0;
+    first.cumulative_gas_used = 21000;
+    first.gas_used = Some(21000);
+    let mut second = first.clone();
+    second.transaction_index = 1;
+    second.cumulative_gas_used = 50000;
+    second.gas_used = None;
+    let mut third = first.clone();
+    third.block_number += 2;
+    let mut headers = [header(8192), header(8193), header(8194)];
+    headers[0].gas_used = 50000;
+    headers[0].gas_limit = 50000;
+    headers[2].gas_used = 21000;
+    headers[2].gas_limit = 30000;
+    ethereum_receipt_gas(&headers, &[first, second, third]).unwrap();
+    ethereum_receipt_gas(&[header(0)], &[]).unwrap();
+}
+
+#[test]
+fn ethereum_gas_rejects_gaps_decreases_and_mismatched_totals() {
+    let mut receipt = receipt_row();
+    receipt.transaction_index = 0;
+    receipt.cumulative_gas_used = 21000;
+    receipt.gas_used = Some(21000);
+    let mut h = header(8192);
+    h.gas_used = 21000;
+    h.gas_limit = 30000;
+    for kind in 0..5 {
+        let mut r = receipt.clone();
+        let mut h = h.clone();
+        match kind {
+            0 => r.transaction_index = 1,
+            1 => r.gas_used = Some(21001),
+            2 => h.gas_used = 20999,
+            3 => h.gas_limit = 20000,
+            _ => r.block_number += 1,
+        }
+        assert!(ethereum_receipt_gas(&[h], &[r]).is_err());
+    }
+    let mut next = receipt.clone();
+    next.transaction_index = 1;
+    next.cumulative_gas_used = 20000;
+    next.gas_used = None;
+    assert!(
+        ethereum_receipt_gas(std::slice::from_ref(&h), &[receipt.clone(), next.clone()]).is_err()
+    );
+    next.transaction_index = 2;
+    next.cumulative_gas_used = 21000;
+    assert!(ethereum_receipt_gas(&[h], &[receipt, next]).is_err());
+}
+
+#[test]
+fn ethereum_gas_handles_u64_extremes_without_wrapping() {
+    let mut receipt = receipt_row();
+    receipt.transaction_index = 0;
+    receipt.cumulative_gas_used = u64::MAX;
+    receipt.gas_used = Some(u64::MAX);
+    let mut h = header(8192);
+    h.gas_used = u64::MAX;
+    h.gas_limit = u64::MAX;
+    ethereum_receipt_gas(std::slice::from_ref(&h), std::slice::from_ref(&receipt)).unwrap();
+    let mut next = receipt.clone();
+    next.transaction_index = 1;
+    next.cumulative_gas_used = 0;
+    next.gas_used = None;
+    assert!(ethereum_receipt_gas(&[h], &[receipt, next]).is_err());
+}

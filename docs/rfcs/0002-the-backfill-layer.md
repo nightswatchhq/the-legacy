@@ -447,7 +447,7 @@ specified in RFC-0001 and implemented for headers, transactions, receipts, logs 
 now checks file integrity, those table codecs, header coverage and stored parent/boundary
 consistency, transaction/receipt/log references and receipt/header blooms where the required tables exist, plus
 RLP/Keccak header hash reconstruction for chain ID 1 using layouts through
-Prague (RFC-0001 §10.7). Other chain profiles, consensus rules and checkpoint trust remain
+Prague and execution gas accounting for chain ID 1 (RFC-0001 §10.7). Other chain profiles, consensus rules and checkpoint trust remain
 unchecked. The native reader and its
 policy API remain proposed. The following remain follow-ups.
 

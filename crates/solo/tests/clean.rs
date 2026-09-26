@@ -1065,3 +1065,86 @@ fn header_bloom_mismatch_survives_file_hash_and_pact_resealing() {
         .starts_with("not checked"));
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn ethereum_gas_accounting_detects_resealed_lies_and_skips_unknown_chains() {
+    let dir = scratch("receipt-gas");
+    let paths = write_local_chain(&dir, 1);
+    let path = &paths[0];
+    attach_linked_tables(path);
+    let directory = path.parent().unwrap();
+    let receipt_file = directory.join("receipts.parquet");
+    let mut receipts =
+        legacy_parquet::receipts::read_receipts(std::fs::read(&receipt_file).unwrap().into())
+            .unwrap();
+    receipts[0].cumulative_gas_used = 21000;
+    let (bytes, entry) = legacy_parquet::receipts::write_receipts(&receipts).unwrap();
+    std::fs::write(&receipt_file, bytes).unwrap();
+    reseal_first(path, |m| {
+        let target = m
+            .files
+            .iter_mut()
+            .find(|f| f.table == Table::Receipts)
+            .unwrap();
+        *target = entry;
+    });
+    let mut headers = legacy_parquet::headers::read_headers(
+        std::fs::read(directory.join("headers.parquet"))
+            .unwrap()
+            .into(),
+    )
+    .unwrap();
+    headers[1].gas_used = 21000;
+    let mut parent = [0; 32];
+    for h in &mut headers {
+        h.parent_hash = parent;
+        h.block_hash = legacy_format::ethereum::header_hash(h).unwrap();
+        parent = h.block_hash;
+    }
+    let (bytes, entry) = legacy_parquet::headers::write_headers(&headers).unwrap();
+    std::fs::write(directory.join(&entry.name), bytes).unwrap();
+    reseal_first(path, |m| {
+        m.chain_id = 1;
+        m.files[0] = entry;
+        m.boundary.start_block_hash = Hash32::new(headers[0].block_hash);
+        m.boundary.end_block_hash = Hash32::new(headers.last().unwrap().block_hash);
+        m.boundary.parent_hash_of_start = Hash32::ZERO;
+    });
+    let out = solo(&[path], &["--files", "--json"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(report["checks"]["receipt_gas"], "pass");
+    assert_eq!(report["relic_checks"][0]["receipt_gas"], "pass");
+    receipts[0].gas_used = Some(1);
+    let (bytes, entry) = legacy_parquet::receipts::write_receipts(&receipts).unwrap();
+    std::fs::write(&receipt_file, bytes).unwrap();
+    reseal_first(path, |m| {
+        let target = m
+            .files
+            .iter_mut()
+            .find(|f| f.table == Table::Receipts)
+            .unwrap();
+        *target = entry;
+    });
+    assert_failed(
+        &solo(&[path], &["--files", "--json"]),
+        "gas_used differs from cumulative difference",
+    );
+    reseal_first(path, |m| m.chain_id = 31337);
+    let out = solo(&[path], &["--files", "--json"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        report["relic_checks"][0]["receipt_gas"],
+        "not checked (unsupported chain gas profile)"
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}

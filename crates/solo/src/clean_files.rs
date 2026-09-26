@@ -47,6 +47,7 @@ pub struct RelicReport {
     pub log_receipt_links: &'static str,
     pub receipt_blooms: &'static str,
     pub header_blooms: &'static str,
+    pub receipt_gas: &'static str,
 }
 
 pub fn summarize(
@@ -59,9 +60,9 @@ pub fn summarize(
     } else if passed == relics.len() {
         PASS
     } else if passed == 0 {
-        "not checked (required tables absent; see per-relic checks)"
+        "not checked (prerequisites not met; see per-relic checks)"
     } else {
-        "partial (required tables absent in some relics; see per-relic checks)"
+        "partial (prerequisites not met in some relics; see per-relic checks)"
     }
 }
 
@@ -178,6 +179,11 @@ pub fn check(
             log_receipt_links: "not checked (logs or receipts absent)",
             receipt_blooms: "not checked (logs or receipts absent)",
             header_blooms: "not checked (headers or receipts absent)",
+            receipt_gas: if manifest.chain_id == 1 {
+                "not checked (headers or receipts absent)"
+            } else {
+                "not checked (unsupported chain gas profile)"
+            },
         };
         let context = |error| format!("relic {}: {error}", manifest.relic_index());
         if let (Some(tx), Some(receipts)) = (&transactions, &receipts) {
@@ -197,6 +203,11 @@ pub fn check(
         if let (Some(headers), Some(receipts)) = (&headers, &receipts) {
             legacy_format::bloom::header_blooms(headers, receipts).map_err(context)?;
             relational.header_blooms = PASS;
+            if manifest.chain_id == 1 {
+                legacy_format::consistency::ethereum_receipt_gas(headers, receipts)
+                    .map_err(context)?;
+                relational.receipt_gas = PASS;
+            }
         }
         reports.relics.push(relational);
     }
