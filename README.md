@@ -38,6 +38,7 @@ anything yet.** Precisely:
 | `solo clean` (manifest structure, relic linkage, pact chain) | implemented; `--files` adds local integrity checks |
 | Headers, transactions, receipts, logs and withdrawals Parquet codecs | implemented, local synthetic round trips; no sealer |
 | Traces Parquet codec, index sidecars | not started |
+| Ethereum receipt trie-leaf encoding | implemented for legacy and types 1..=4; independent synthetic vectors |
 | Trie rebuilding, checkpoint anchoring | not started |
 | `solo serve`, all six Shadow sources | not started |
 
@@ -45,7 +46,7 @@ anything yet.** Precisely:
 until each one is real. A verification report that implies more than it checked is worse than no
 report at all.
 
-The workspace has 137 tests. `solo clean --files` checks each listed file's size, BLAKE3 and
+The workspace has 142 tests. `solo clean --files` checks each listed file's size, BLAKE3 and
 Parquet footer counts. For all five core tables it also checks schema, row order, canonical
 content hash, decoded count and block bounds. Headers must cover every block in the
 relic, have consistent stored parent links, and match the manifest boundaries. For chain ID 1,

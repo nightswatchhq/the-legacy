@@ -598,14 +598,31 @@ encoders (`ordered_trie_root_with_encoder` computes exactly this).
 
 ### 10.2 Receipts trie
 
-Per EIP-2718, "the receipt root in the block header MUST be the root hash of
-`Trie(rlp(Index) => Receipt)`" where `Receipt` is `TransactionType || ReceiptPayload` for typed
-receipts and `LegacyReceipt = rlp([status, cumulativeGasUsed, logsBloom, logs])` for legacy.
-Critical: the first receipt element is the **status byte post-Byzantium (EIP-658)** but the
-**32-byte intermediate post-state root pre-Byzantium**; the `receipts`/`logs` tables carry exactly
-the fields to reconstruct either. Compare against `headers.receipts_root`. Encoder subtlety (per
-alloy's `ReceiptEnvelope` docs): the in-protocol Merkle tree may commit to either the 0-prefixed or
-the raw form for legacy receipts, so the encoder must preserve the exact decoded envelope form.
+For Ethereum, [EIP-2718](https://eips.ethereum.org/EIPS/eip-2718) defines trie keys as
+`RLP(transaction_index)`. A legacy receipt value is the bare
+`RLP([outcome, cumulativeGasUsed, logsBloom, logs])`, with **no zero type prefix**. Types 1
+through 4 prepend their single raw type byte to that RLP list, without an outer RLP string
+wrapper. The original instruction to preserve a possible zero-prefixed legacy form was incorrect
+for this Ethereum profile and could produce the wrong root.
+
+The outcome is the status integer after [EIP-658](https://eips.ethereum.org/EIPS/eip-658), or a
+32-byte intermediate state root for pre-Byzantium legacy receipts. Status zero is the empty RLP
+string (`80`), not the single byte `00`; status one encodes as `01`. Each log is
+`RLP([address, [topic0, ...], data])` in log order. Transaction hashes, block numbers, gas_used,
+fees, contract addresses and other convenience columns are excluded from the receipt value.
+
+`legacy-format::ethereum_receipts` implements these key/value bytes for legacy and types 1..=4.
+It validates row shapes and log order/key/hash references, rejects typed state-root receipts and
+unsupported types (including OP deposits), and encodes the supplied receipt bloom as stored.
+Bloom reconstruction remains a separate check; an empty log slice is not proof that no logs
+were omitted. This API is explicitly Ethereum-specific, not an automatic profile for every silo.
+Fork activation, complete receipt/log sets and trie construction are not implemented by the
+encoder. Independent synthetic RLP vectors and their Python generator are checked in under
+`crates/legacy-format/tests/fixtures/`; they are not authenticated chain fixtures.
+
+Cleaning will rebuild the trie from these values and compare it against `headers.receipts_root`.
+That root comparison is still **not checked** by the current executable. Encoding support must
+not be presented as trie verification or checkpoint trust.
 
 ### 10.3 Withdrawals root
 

@@ -32,7 +32,8 @@ implementation-linked amendments, not already supported interfaces.
 
 - `crates/legacy-format` - geometry, canonical JSON (JCS), manifests, the pact chain, the registry.
   Canonical row primitives, headers/transactions/receipts/logs/withdrawals rows and their content hashes
-  live here.
+  live here. Ethereum receipt trie-leaf encoding exists for legacy and types 1..=4; trie
+  construction and root verification do not.
   No Parquet, no object storage, no JSON-RPC. Shadow and Solo agree on what a relic is by depending
   on this, not by both being careful.
 - `crates/legacy-parquet` - Parquet schemas, shared writer profile and codecs for the implemented

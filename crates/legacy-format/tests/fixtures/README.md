@@ -1,4 +1,4 @@
-# Header fixtures
+# Format and consensus-encoding fixtures
 
 `header_v1.hex` is the independent canonical-row vector used by the format unit tests.
 
@@ -19,3 +19,10 @@ assembled with Python's `int.to_bytes` and `struct.pack(">Q", length)`, in the r
 column order. They differ only in status versus post-state outcome, and cover nullable
 fields, uint64 extremes, an empty uint256 and an opaque scalar with a leading zero.
 Their synthetic row is in `tests/receipts.rs`; no RPC or signed chain fixture is involved.
+
+`receipt_failure_rlp.hex`, `receipt_state_rlp.hex` and `receipt_logs_rlp.hex` are synthetic
+Ethereum receipt trie-value vectors. `receipt_rlp_vectors.py` generates them independently
+with a dependency-free Python RLP encoder; it uses neither the Rust encoder nor alloy-rlp.
+They cover failed status zero, the pre-Byzantium state root, nested logs, topics and a 56-byte
+data field. The stored blooms are arbitrary, deliberately separating encoding from bloom
+validation. Typed-envelope tests prepend raw type bytes 1..=4 to the legacy payload vector.
