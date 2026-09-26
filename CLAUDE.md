@@ -13,9 +13,10 @@ implementation-linked amendments, not already supported interfaces.
    actually checked and what was not. `solo clean` currently checks manifest structure, relic
    linkage and the pact chain by default. `--files` adds local byte integrity, Parquet counts and
    decoded checks for all five core tables, including header coverage and stored links. It
-   reconstructs Ethereum header hashes through Prague for chain ID 1 only. Receipt consistency,
-   other chain profiles, consensus rules and checkpoint trust remain unchecked; hash consistency
-   is not chain trust.
+   reconstructs Ethereum header hashes through Prague for chain ID 1 only and checks transaction,
+   receipt and log references where both tables exist. Receipt blooms/derived fields, other chain
+   profiles, completeness, consensus rules and checkpoint trust remain unchecked; consistency is
+   not chain trust.
    This is the single most important rule in the repo: the whole project's
    value is that its claims are true.
 3. **Traces are not header-committed.** No cryptographic claim about the traces tier is acceptable

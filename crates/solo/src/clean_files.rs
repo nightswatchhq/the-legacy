@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use legacy_format::{Manifest, Table, SPEC_VERSION};
-use legacy_parquet::verify::{verify_file, DecodedChecks};
+use legacy_parquet::verify::{verify_file_with_rows, DecodedChecks, VerifiedRows};
 use serde::Serialize;
 
 const PASS: &str = "pass";
@@ -33,12 +33,42 @@ pub struct FileChecks {
     pub manifest_boundary: &'static str,
 }
 
+#[derive(Debug, Default)]
+pub struct LocalReport {
+    pub files: Vec<FileReport>,
+    pub relics: Vec<RelicReport>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RelicReport {
+    pub relic_index: u64,
+    pub transaction_receipt_links: &'static str,
+    pub log_transaction_links: &'static str,
+    pub log_receipt_links: &'static str,
+}
+
+pub fn summarize(
+    relics: &[RelicReport],
+    field: impl Fn(&RelicReport) -> &'static str,
+) -> &'static str {
+    let passed = relics.iter().filter(|r| field(r) == PASS).count();
+    if relics.is_empty() {
+        "not checked (no relic data read)"
+    } else if passed == relics.len() {
+        PASS
+    } else if passed == 0 {
+        "not checked (required tables absent; see per-relic checks)"
+    } else {
+        "partial (required tables absent in some relics; see per-relic checks)"
+    }
+}
+
 /// Run after pact/manifest validation. No success report is emitted until all files pass.
 pub fn check(
     paths: &[PathBuf],
     manifests: &[Manifest],
-) -> Result<Vec<FileReport>, Box<dyn std::error::Error>> {
-    let mut reports = Vec::new();
+) -> Result<LocalReport, Box<dyn std::error::Error>> {
+    let mut reports = LocalReport::default();
     for (path, manifest) in paths.iter().zip(manifests) {
         if manifest.spec_version != SPEC_VERSION {
             return Err(format!(
@@ -49,6 +79,9 @@ pub fn check(
             .into());
         }
         let directory = path.parent().ok_or("manifest has no parent directory")?;
+        let mut transactions = None;
+        let mut receipts = None;
+        let mut logs = None;
         for entry in &manifest.files {
             // Keep the path invariant here too: this module must remain safe if a future caller
             // forgets the manifest-validation step.
@@ -83,13 +116,19 @@ pub fn check(
             // the hash of one file and the rows of a replacement.
             let bytes = std::fs::read(&file_path)
                 .map_err(|e| format!("reading {}: {e}", file_path.display()))?;
-            let decoded = verify_file(bytes.into(), entry, manifest)
+            let (decoded, rows) = verify_file_with_rows(bytes.into(), entry, manifest)
                 .map_err(|e| format!("{}: {e}", file_path.display()))?;
+            match rows {
+                VerifiedRows::Transactions(rows) => transactions = Some(rows),
+                VerifiedRows::Receipts(rows) => receipts = Some(rows),
+                VerifiedRows::Logs(rows) => logs = Some(rows),
+                VerifiedRows::Other => {}
+            }
             let table_status = match decoded {
                 DecodedChecks::Passed | DecodedChecks::HeadersPassed { .. } => PASS,
                 DecodedChecks::NotImplemented => NO_CODEC,
             };
-            reports.push(FileReport {
+            reports.files.push(FileReport {
                 relic_index: manifest.relic_index(),
                 name: entry.name.clone(),
                 table: entry.table,
@@ -128,6 +167,26 @@ pub fn check(
                 },
             });
         }
+        let mut relational = RelicReport {
+            relic_index: manifest.relic_index(),
+            transaction_receipt_links: "not checked (transactions or receipts absent)",
+            log_transaction_links: "not checked (logs or transactions absent)",
+            log_receipt_links: "not checked (logs or receipts absent)",
+        };
+        let context = |error| format!("relic {}: {error}", manifest.relic_index());
+        if let (Some(tx), Some(receipts)) = (&transactions, &receipts) {
+            legacy_format::consistency::transaction_receipt_links(tx, receipts).map_err(context)?;
+            relational.transaction_receipt_links = PASS;
+        }
+        if let (Some(logs), Some(tx)) = (&logs, &transactions) {
+            legacy_format::consistency::log_transaction_links(logs, tx).map_err(context)?;
+            relational.log_transaction_links = PASS;
+        }
+        if let (Some(logs), Some(receipts)) = (&logs, &receipts) {
+            legacy_format::consistency::log_receipt_links(logs, receipts).map_err(context)?;
+            relational.log_receipt_links = PASS;
+        }
+        reports.relics.push(relational);
     }
     Ok(reports)
 }

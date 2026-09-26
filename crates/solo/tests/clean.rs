@@ -663,7 +663,8 @@ fn transaction_content_checks_do_not_claim_envelope_or_trie_verification() {
     let dir = scratch("transactions");
     let paths = write_local_chain(&dir, 1);
     let mut row = transaction_row();
-    row.block_number = 7;
+    row.block_number = 1;
+    row.transaction_index = 0;
     let (bytes, entry) =
         legacy_parquet::transactions::write_transactions(std::slice::from_ref(&row)).unwrap();
     let file_path = paths[0].parent().unwrap().join(&entry.name);
@@ -725,14 +726,16 @@ fn receipt_row() -> legacy_format::receipts::ReceiptRow {
 }
 
 #[test]
-fn all_core_tables_pass_content_checks_without_claiming_cross_table_verification() {
+fn all_core_tables_pass_link_checks_without_claiming_trie_verification() {
     let dir = scratch("receipts");
     let paths = write_local_chain(&dir, 1);
     let path = &paths[0];
     let mut transaction = transaction_row();
-    transaction.block_number = 7;
+    transaction.block_number = 1;
+    transaction.transaction_index = 0;
     let mut receipt = receipt_row();
-    receipt.block_number = 7;
+    receipt.block_number = 1;
+    receipt.transaction_index = 0;
     let (tx_bytes, tx_entry) =
         legacy_parquet::transactions::write_transactions(&[transaction]).unwrap();
     let (bytes, entry) =
@@ -760,6 +763,14 @@ fn all_core_tables_pass_content_checks_without_claiming_cross_table_verification
         .iter()
         .all(|file| file["checks"]["content_hash"] == "pass"));
     for check in [
+        "transaction_receipt_links",
+        "log_transaction_links",
+        "log_receipt_links",
+    ] {
+        assert_eq!(report["checks"][check], "pass");
+        assert_eq!(report["relic_checks"][0][check], "pass");
+    }
+    for check in [
         "receipt_consistency",
         "receipts_root",
         "table_completeness",
@@ -780,5 +791,162 @@ fn all_core_tables_pass_content_checks_without_claiming_cross_table_verification
         &solo(&[path], &["--files", "--json"]),
         "outside the relic range",
     );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+fn attach_linked_tables(path: &Path) {
+    let mut tx = transaction_row();
+    tx.block_number = 1;
+    tx.transaction_index = 0;
+    let mut receipt = receipt_row();
+    receipt.block_number = 1;
+    receipt.transaction_index = 0;
+    for (bytes, entry) in [
+        legacy_parquet::transactions::write_transactions(&[tx]).unwrap(),
+        legacy_parquet::receipts::write_receipts(&[receipt]).unwrap(),
+    ] {
+        std::fs::write(path.parent().unwrap().join(&entry.name), bytes).unwrap();
+        reseal_first(path, |m| m.files.push(entry));
+    }
+}
+
+#[test]
+fn resealed_relational_lies_fail_without_a_success_report() {
+    for kind in [
+        "receipt_hash",
+        "receipt_key",
+        "receipt_type",
+        "missing_receipt",
+        "extra_receipt",
+        "log_hash",
+        "orphan_log",
+        "missing_transaction",
+    ] {
+        let dir = scratch(&format!("link-{kind}"));
+        let paths = write_local_chain(&dir, 1);
+        let path = &paths[0];
+        attach_linked_tables(path);
+        let directory = path.parent().unwrap();
+        let (bytes, entry) = if kind.starts_with("log") || kind == "orphan_log" {
+            let mut rows = legacy_parquet::logs::read_logs(
+                std::fs::read(directory.join("logs.parquet"))
+                    .unwrap()
+                    .into(),
+            )
+            .unwrap();
+            if kind == "log_hash" {
+                rows[0].transaction_hash = [0xff; 32];
+            } else {
+                rows[0].transaction_index = 1;
+            }
+            legacy_parquet::logs::write_logs(&rows).unwrap()
+        } else if kind == "missing_transaction" {
+            legacy_parquet::transactions::write_transactions(&[]).unwrap()
+        } else {
+            let mut rows = legacy_parquet::receipts::read_receipts(
+                std::fs::read(directory.join("receipts.parquet"))
+                    .unwrap()
+                    .into(),
+            )
+            .unwrap();
+            match kind {
+                "receipt_hash" => rows[0].transaction_hash = [0xff; 32],
+                "receipt_key" => rows[0].block_number = 2,
+                "receipt_type" => rows[0].tx_type = 0,
+                "missing_receipt" => rows.clear(),
+                "extra_receipt" => {
+                    let mut extra = rows[0].clone();
+                    extra.transaction_index = 1;
+                    rows.push(extra);
+                }
+                _ => unreachable!(),
+            }
+            legacy_parquet::receipts::write_receipts(&rows).unwrap()
+        };
+        std::fs::write(directory.join(&entry.name), bytes).unwrap();
+        reseal_first(path, |m| {
+            let target = m
+                .files
+                .iter_mut()
+                .find(|file| file.table == entry.table)
+                .unwrap();
+            *target = entry
+        });
+        assert_failed(&solo(&[path], &["--files", "--json"]), "relic 0:");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[test]
+fn link_reports_distinguish_missing_tables_empty_tables_and_partial_runs() {
+    let dir = scratch("link-scope");
+    let paths = write_local_chain(&dir, 2);
+    attach_linked_tables(&paths[0]);
+    // Reseal the successor after changing its predecessor's pact root.
+    let first: Manifest = serde_json::from_slice(&std::fs::read(&paths[0]).unwrap()).unwrap();
+    let mut second: Manifest = serde_json::from_slice(&std::fs::read(&paths[1]).unwrap()).unwrap();
+    pact::seal_chain(Some(&first), std::slice::from_mut(&mut second)).unwrap();
+    std::fs::write(&paths[1], second.to_canonical_bytes().unwrap()).unwrap();
+    let out = solo(&paths.iter().collect::<Vec<_>>(), &["--files", "--json"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    for check in [
+        "transaction_receipt_links",
+        "log_transaction_links",
+        "log_receipt_links",
+    ] {
+        assert!(report["checks"][check]
+            .as_str()
+            .unwrap()
+            .starts_with("partial"));
+        assert_eq!(report["relic_checks"][0][check], "pass");
+        assert!(report["relic_checks"][1][check]
+            .as_str()
+            .unwrap()
+            .starts_with("not checked"));
+    }
+    let out = solo(&[&paths[0]], &["--json"]);
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(report["checks"]["transaction_receipt_links"]
+        .as_str()
+        .unwrap()
+        .starts_with("not checked"));
+    for (bytes, entry) in [
+        legacy_parquet::transactions::write_transactions(&[]).unwrap(),
+        legacy_parquet::receipts::write_receipts(&[]).unwrap(),
+        legacy_parquet::logs::write_logs(&[]).unwrap(),
+    ] {
+        std::fs::write(paths[0].parent().unwrap().join(&entry.name), bytes).unwrap();
+        reseal_first(&paths[0], |m| {
+            let target = m
+                .files
+                .iter_mut()
+                .find(|file| file.table == entry.table)
+                .unwrap();
+            *target = entry
+        });
+    }
+    let out = solo(&[&paths[0]], &["--files", "--json"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    for check in [
+        "transaction_receipt_links",
+        "log_transaction_links",
+        "log_receipt_links",
+    ] {
+        assert_eq!(report["checks"][check], "pass");
+    }
+    assert!(report["checks"]["table_completeness"]
+        .as_str()
+        .unwrap()
+        .starts_with("not checked"));
     std::fs::remove_dir_all(dir).unwrap();
 }

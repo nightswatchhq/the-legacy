@@ -119,11 +119,16 @@ fn clean(
     let manifests: Vec<Manifest> = paths.iter().map(|p| load(p)).collect::<Result<_, _>>()?;
 
     let head = pact::verify_chain(previous.as_ref(), &manifests)?;
-    let file_reports = if files {
+    let local_report = if files {
         clean_files::check(paths, &manifests)?
     } else {
-        Vec::new()
+        clean_files::LocalReport::default()
     };
+    let file_reports = &local_report.files;
+    let tx_receipt_links =
+        clean_files::summarize(&local_report.relics, |r| r.transaction_receipt_links);
+    let log_tx_links = clean_files::summarize(&local_report.relics, |r| r.log_transaction_links);
+    let log_receipt_links = clean_files::summarize(&local_report.relics, |r| r.log_receipt_links);
     let byte_status = if files {
         "pass"
     } else {
@@ -184,7 +189,10 @@ fn clean(
                 "transaction_envelopes": "not checked (RLP semantics, hash and raw/structured agreement not implemented)",
                 "transaction_signatures": "not checked (signature validity and sender recovery not implemented)",
                 "transactions_root": "not checked (not implemented)",
-                "receipt_consistency": "not checked (transaction/log agreement, blooms and derived fields not implemented)",
+                "transaction_receipt_links": tx_receipt_links,
+                "log_transaction_links": log_tx_links,
+                "log_receipt_links": log_receipt_links,
+                "receipt_consistency": "not checked (blooms and derived fields not implemented)",
                 "receipts_root": "not checked (not implemented)",
                 "withdrawals_root": "not checked (not implemented)",
                 "checkpoint_anchor": "not checked (not implemented)",
@@ -196,6 +204,7 @@ fn clean(
             },
             "pact_root": head.to_hex(),
             "files": file_reports,
+            "relic_checks": local_report.relics,
             "scope": "requested manifests only; --after supplies predecessor context, not verified file coverage",
             "cleaned_by": concat!("solo/", env!("CARGO_PKG_VERSION")),
         });
@@ -215,7 +224,7 @@ fn clean(
             println!(
                 "checked     complete header coverage, stored parent links, manifest boundaries"
             );
-            for file in &file_reports {
+            for file in file_reports {
                 println!(
                     "table       relic {} {}: schema/rows/content hash/block bounds: {}",
                     file.relic_index, file.name, file.checks.content_hash
@@ -227,7 +236,19 @@ fn clean(
         println!("header hashes/linkage: {header_hash_status} (Ethereum layout through Prague; requested files only)");
         println!("NOT checked consensus rules/fork schedule, other table completeness, transactions/receipts/withdrawals roots, checkpoint anchor, producer signatures");
         println!("NOT checked transaction envelopes, RLP semantics, transaction hashes, signatures or sender recovery");
-        println!("NOT checked receipt transaction/log agreement, blooms or derived fields");
+        println!("transaction/receipt links: {tx_receipt_links}");
+        println!("log/transaction links: {log_tx_links}");
+        println!("log/receipt links: {log_receipt_links}");
+        for relic in &local_report.relics {
+            println!(
+                "relic {} links: transaction/receipt {}; log/transaction {}; log/receipt {}",
+                relic.relic_index,
+                relic.transaction_receipt_links,
+                relic.log_transaction_links,
+                relic.log_receipt_links
+            );
+        }
+        println!("NOT checked receipt blooms or derived fields");
         println!("NOT checked era1 accumulator, finality, index sidecars");
         println!("scope       requested manifests only; --after supplies predecessor context, not verified file coverage");
         if traces > 0 {

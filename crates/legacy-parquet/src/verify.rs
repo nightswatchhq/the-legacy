@@ -18,10 +18,28 @@ pub enum DecodedChecks {
     NotImplemented,
 }
 
+/// Rows retained from the very buffer whose hashes and contents were verified.
+#[derive(Debug)]
+pub enum VerifiedRows {
+    Transactions(Vec<legacy_format::transactions::TransactionRow>),
+    Receipts(Vec<legacy_format::receipts::ReceiptRow>),
+    Logs(Vec<legacy_format::logs::LogRow>),
+    Other,
+}
+
 /// Check the same byte buffer for integrity, footer counts, and supported table contents.
 /// Only header row coverage is checked; other-table completeness, finality, trie roots and
 /// checkpoint trust are not. Only chain ID 1 uses the Ethereum through-Prague hash profile.
 pub fn verify_file(bytes: Bytes, entry: &FileEntry, manifest: &Manifest) -> Result<DecodedChecks> {
+    verify_file_with_rows(bytes, entry, manifest).map(|(checks, _)| checks)
+}
+
+/// As `verify_file`, retaining relational tables for checks without reopening or decoding twice.
+pub fn verify_file_with_rows(
+    bytes: Bytes,
+    entry: &FileEntry,
+    manifest: &Manifest,
+) -> Result<(DecodedChecks, VerifiedRows)> {
     let range = manifest.block_range;
     let bad = |message: &str| Error::Verification(format!("{}: {message}", entry.name));
     if manifest.spec_version != SPEC_VERSION {
@@ -53,7 +71,7 @@ pub fn verify_file(bytes: Bytes, entry: &FileEntry, manifest: &Manifest) -> Resu
     if group_rows != Some(entry.row_count) {
         return Err(bad("row-group counts do not sum to the file row count"));
     }
-    let (hash, count, in_range) = match entry.table {
+    let (hash, count, in_range, retained) = match entry.table {
         Table::Headers => {
             let rows = crate::headers::read_headers(bytes)?;
             legacy_format::headers::verify_relic_rows(&rows, range, manifest.boundary)?;
@@ -66,6 +84,7 @@ pub fn verify_file(bytes: Bytes, entry: &FileEntry, manifest: &Manifest) -> Resu
                 legacy_format::headers::content_hash(&rows)?,
                 rows.len(),
                 true,
+                VerifiedRows::Other,
             )
         }
         Table::Transactions => {
@@ -74,6 +93,7 @@ pub fn verify_file(bytes: Bytes, entry: &FileEntry, manifest: &Manifest) -> Resu
                 legacy_format::transactions::content_hash(&rows)?,
                 rows.len(),
                 rows.iter().all(|r| range.contains(r.block_number)),
+                VerifiedRows::Transactions(rows),
             )
         }
         Table::Receipts => {
@@ -82,6 +102,7 @@ pub fn verify_file(bytes: Bytes, entry: &FileEntry, manifest: &Manifest) -> Resu
                 legacy_format::receipts::content_hash(&rows)?,
                 rows.len(),
                 rows.iter().all(|r| range.contains(r.block_number)),
+                VerifiedRows::Receipts(rows),
             )
         }
         Table::Logs => {
@@ -90,6 +111,7 @@ pub fn verify_file(bytes: Bytes, entry: &FileEntry, manifest: &Manifest) -> Resu
                 legacy_format::logs::content_hash(&rows)?,
                 rows.len(),
                 rows.iter().all(|r| range.contains(r.block_number)),
+                VerifiedRows::Logs(rows),
             )
         }
         Table::Withdrawals => {
@@ -98,9 +120,10 @@ pub fn verify_file(bytes: Bytes, entry: &FileEntry, manifest: &Manifest) -> Resu
                 legacy_format::withdrawals::content_hash(&rows)?,
                 rows.len(),
                 rows.iter().all(|r| range.contains(r.block_number)),
+                VerifiedRows::Other,
             )
         }
-        _ => return Ok(DecodedChecks::NotImplemented),
+        _ => return Ok((DecodedChecks::NotImplemented, VerifiedRows::Other)),
     };
     if hash != entry.content_hash {
         return Err(bad("content_hash does not match decoded canonical rows"));
@@ -111,11 +134,12 @@ pub fn verify_file(bytes: Bytes, entry: &FileEntry, manifest: &Manifest) -> Resu
     if !in_range {
         return Err(bad("decoded block number is outside the relic range"));
     }
-    Ok(if entry.table == Table::Headers {
+    let checks = if entry.table == Table::Headers {
         DecodedChecks::HeadersPassed {
             hashes: manifest.chain_id == 1,
         }
     } else {
         DecodedChecks::Passed
-    })
+    };
+    Ok((checks, retained))
 }

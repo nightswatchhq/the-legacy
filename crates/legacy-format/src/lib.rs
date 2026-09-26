@@ -10,6 +10,7 @@
 //! mapping is a shift rather than a division.
 
 pub mod canonical;
+pub mod consistency;
 pub mod error;
 pub mod ethereum;
 pub mod hash;

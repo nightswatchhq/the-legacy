@@ -707,13 +707,35 @@ checkpoint, era1 accumulator or finality check.
 `--after <manifest>` provides predecessor pact context for a continuation. Its table files are
 not checked unless they are part of the requested manifest run. The report names that scope.
 Transaction envelope semantics (including raw/structured agreement and transaction hashes) and
-signature validity/sender recovery are separately reported as **not checked**. Receipt agreement
-with transactions/logs, bloom contents and derived fields also report **not checked** under
-`receipt_consistency`. Other table
-completeness, consensus rules, transaction/receipt/withdrawal roots, era1
+signature validity/sender recovery are separately reported as **not checked**. Receipt bloom
+contents and derived fields still report **not checked** under `receipt_consistency`.
+Other table completeness, consensus rules, transaction/receipt/withdrawal roots, era1
 accumulators, finality, index correctness, producer signatures and checkpoint anchoring remain
 unimplemented. The example in §10.6 is the intended full report, not current executable output.
-The current file checker holds a file and decoded rows in memory and is not a streaming scanner.
+After the file checks, the cleaner compares available tables within each requested relic:
+
+- `transaction_receipt_links`: transactions and receipts must have equal row counts and match
+  exactly by `(block_number, transaction_index)`, `transaction_hash` and `type`.
+- `log_transaction_links`: each log must match a transaction by block/index and transaction hash.
+- `log_receipt_links`: each log must match a receipt by block/index and transaction hash.
+
+Each check runs whenever both of its tables are listed, independently of the other checks. A
+missing table reports **not checked**, never an assumed empty table. Present empty tables may
+pass. JSON `relic_checks` and the prose report name each relic's results. Aggregate status is
+**pass** only when every requested relic passed that check, **partial** when some passed and
+others lacked tables, and **not checked** when none ran. Manifest-only mode checks none of these.
+A mismatch fails the whole run before any success report is printed.
+
+These checks prove agreement among supplied rows, not completeness, transaction authenticity or
+correct execution. Deleting a transaction and its receipt together (and any associated logs)
+can still pass; transaction indices need not be contiguous. Receipt blooms, derived gas/fees,
+log payload correctness and trie roots remain unchecked. The typed table codecs remain usable
+on independent slices; these relationships are enforced by the cleaner when counterparts exist.
+
+The file checker retains decoded transactions, receipts and logs for one relic until its link
+checks finish, alongside the current file buffer and decoder working data. The relational checks
+use the rows decoded from the same bytes checked for file/content hashes, without reopening the
+files. This is not a streaming scanner and its memory use can be substantial on busy relics.
 
 ## 11. Ingestion (Shadow)
 
