@@ -110,7 +110,7 @@ fn clean_rejects_a_relic_edited_after_sealing() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-// The transaction codec is not implemented. A valid footer must not be reported as decoded
+// The receipt codec is not implemented. A valid footer must not be reported as decoded
 // table verification. Everything here, including the header hashes below, is synthetic.
 fn unsupported_fixture(start: u64) -> (Vec<u8>, FileEntry) {
     use arrow_array::{RecordBatch, UInt64Array};
@@ -133,8 +133,8 @@ fn unsupported_fixture(start: u64) -> (Vec<u8>, FileEntry) {
     writer.write(&batch).unwrap();
     writer.close().unwrap();
     let entry = FileEntry {
-        name: "transactions.parquet".into(),
-        table: Table::Transactions,
+        name: "receipts.parquet".into(),
+        table: Table::Receipts,
         byte_size: bytes.len() as u64,
         blake3: blake3(&bytes),
         content_hash: Hash32::ZERO,
@@ -290,7 +290,7 @@ fn file_cleaning_reports_precisely_which_tables_were_decoded() {
     for file in report["files"].as_array().unwrap() {
         assert_eq!(file["checks"]["blake3"], "pass");
         let status = file["checks"]["content_hash"].as_str().unwrap();
-        if file["table"] == "transactions" {
+        if file["table"] == "receipts" {
             assert!(status.starts_with("not checked"));
             assert!(file["checks"]["schema"]
                 .as_str()
@@ -322,9 +322,7 @@ fn file_cleaning_reports_precisely_which_tables_were_decoded() {
     let prose = solo(&[&paths[0]], &["--files"]);
     assert!(prose.status.success());
     let text = String::from_utf8(prose.stdout).unwrap();
-    assert!(
-        text.contains("transactions.parquet: schema/rows/content hash/block bounds: not checked")
-    );
+    assert!(text.contains("receipts.parquet: schema/rows/content hash/block bounds: not checked"));
     assert!(text.contains("headers.parquet: schema/rows/content hash/block bounds: pass"));
     assert!(text.contains("withdrawals.parquet: schema/rows/content hash/block bounds: pass"));
     std::fs::remove_dir_all(dir).unwrap();
@@ -626,6 +624,78 @@ fn reconstructs_headers_and_rejects_resealed_field_tampering() {
     assert_failed(
         &solo(&[path], &["--files", "--json"]),
         "block 4000: reconstructed Ethereum header hash",
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+fn transaction_row() -> legacy_format::transactions::TransactionRow {
+    legacy_format::transactions::TransactionRow {
+        block_number: 8192,
+        transaction_index: 7,
+        transaction_hash: [0x11; 32],
+        tx_type: 2,
+        nonce: u64::MAX,
+        from: [0x22; 20],
+        to: Some([0x33; 20]),
+        value: vec![1, 2],
+        gas_limit: 21000,
+        gas_price: None,
+        max_fee_per_gas: Some(vec![3]),
+        max_priority_fee_per_gas: Some(vec![]),
+        max_fee_per_blob_gas: None,
+        input: vec![0xaa, 0xbb],
+        access_list: Some(vec![0xc0]),
+        blob_versioned_hashes: None,
+        authorization_list: None,
+        v_or_y_parity: Some(1),
+        r: Some([0x44; 32]),
+        s: Some([0x55; 32]),
+        chain_id: Some(u64::MAX),
+        source_hash: None,
+        mint: None,
+        is_system_tx: None,
+        raw_envelope: Some(vec![2, 0xc0]),
+    }
+}
+
+#[test]
+fn transaction_content_checks_do_not_claim_envelope_or_trie_verification() {
+    let dir = scratch("transactions");
+    let paths = write_local_chain(&dir, 1);
+    let mut row = transaction_row();
+    row.block_number = 7;
+    let (bytes, entry) =
+        legacy_parquet::transactions::write_transactions(std::slice::from_ref(&row)).unwrap();
+    let file_path = paths[0].parent().unwrap().join(&entry.name);
+    std::fs::write(&file_path, bytes).unwrap();
+    reseal_first(&paths[0], |m| m.files.push(entry));
+    let out = solo(&[&paths[0]], &["--files", "--json"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(report["files"][4]["checks"]["content_hash"], "pass");
+    for check in [
+        "transaction_envelopes",
+        "transaction_signatures",
+        "transactions_root",
+    ] {
+        assert!(report["checks"][check]
+            .as_str()
+            .unwrap()
+            .starts_with("not checked"));
+    }
+    reseal_first(&paths[0], |m| m.files[4].content_hash = Hash32::ZERO);
+    assert_failed(&solo(&[&paths[0]], &["--files", "--json"]), "content_hash");
+    row.block_number = 8192;
+    let (bytes, entry) = legacy_parquet::transactions::write_transactions(&[row]).unwrap();
+    std::fs::write(&file_path, bytes).unwrap();
+    reseal_first(&paths[0], |m| m.files[4] = entry);
+    assert_failed(
+        &solo(&[&paths[0]], &["--files", "--json"]),
+        "outside the relic range",
     );
     std::fs::remove_dir_all(dir).unwrap();
 }

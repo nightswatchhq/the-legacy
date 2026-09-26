@@ -443,7 +443,7 @@ in the corpus. There is no universal zero-cost claim for arbitrary indexer confi
 
 These are implementation-linked proposals, not claims that all changes land with this draft.
 The canonical row encoding and exact-mirror versus content-identity corrections are already
-specified in RFC-0001 and implemented for headers, logs and withdrawals. Local `solo clean --files`
+specified in RFC-0001 and implemented for headers, transactions, logs and withdrawals. Local `solo clean --files`
 now checks file integrity, those table codecs, header coverage and stored parent/boundary
 consistency, plus RLP/Keccak header hash reconstruction for chain ID 1 using layouts through
 Prague (RFC-0001 §10.7). Other chain profiles, consensus rules and checkpoint trust remain

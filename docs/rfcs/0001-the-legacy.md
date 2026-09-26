@@ -134,7 +134,9 @@ drift; content identity is defined by canonical rows (§11.1), not by Parquet fr
   Erigon consumed 430 GB with zstd level 3 compression"; level 3 is the de-facto community setting
   and near the throughput/ratio knee.
 - **Row-group size:** 128 MiB of canonical row bytes (§11.1), including presence bytes and length
-  prefixes. Append a row if it fits; otherwise start a new group. An individual oversized row
+  prefixes. For transactions, size `raw_envelope` as its actual nullable binary value rather
+  than its identity-only null placeholder, so stored envelopes also consume the budget.
+  Append a row if it fits; otherwise start a new group. An individual oversized row
   occupies one group. An exact fit stays in the current group. Empty tables have zero groups.
   This is a deterministic uncompressed sizing measure, not Parquet's estimated encoded size.
 - **Data-page size:** 1 MiB target, checked in batches of 1024 values; no separate row-count cap.
@@ -226,7 +228,7 @@ each header's RLP/Keccak hash and authenticating the chain to its trust anchor.
 | `access_list` | BYTE_ARRAY | binary (RLP) | yes | PLAIN | 2930+ |
 | `blob_versioned_hashes` | BYTE_ARRAY | binary (RLP list) | yes | PLAIN | 4844; hashes only, no blobs |
 | `authorization_list` | BYTE_ARRAY | binary (RLP) | yes | PLAIN | 7702 |
-| `v_or_y_parity` | INT32 | uint8 | yes | PLAIN | signature |
+| `v_or_y_parity` | INT32 | uint8 | yes | PLAIN | normalized signature value; see below |
 | `r` | FIXED_LEN_BYTE_ARRAY(32) | binary | yes | PLAIN | null for OP deposits |
 | `s` | FIXED_LEN_BYTE_ARRAY(32) | binary | yes | PLAIN | null for OP deposits |
 | `chain_id` | INT64 | uint64 | yes | RLE_DICTIONARY | null for legacy pre-155 |
@@ -242,6 +244,26 @@ save space; cleaning handles both. era1 supplies encoded transaction bodies; a J
 response may instead require reconstructing the signed envelope from fields. Stored envelopes
 must agree with the structured columns. Cleaning still rebuilds the ordered trie and authenticates
 its header root; having raw bytes does not reduce it to a file or transaction hash check.
+
+**Signature normalization.** For unprotected legacy transactions (`type = 0`, `chain_id = null`),
+`v_or_y_parity` stores 27 or 28. For EIP-155 legacy transactions it stores parity 0 or 1;
+reconstruct wire `v` as `2 * chain_id + 35 + parity` using a wide integer, not uint8 or uint64
+arithmetic. The chain ID is stored separately. Typed signed transactions likewise store parity
+0 or 1. Null remains available for unsigned chain-specific transactions such as OP deposits.
+This resolves the ambiguous original uint8 column: a wire EIP-155 `v` can exceed 255 even though
+its parity cannot. See [EIP-155](https://eips.ethereum.org/EIPS/eip-155).
+
+**Current codec.** The row and Parquet codecs preserve all 25 columns, enforce minimal uint256
+magnitudes, the normalized parity representation and strict `(block_number, transaction_index)`
+ordering. They permit slices and do not assert contiguous transaction indices or block completeness.
+RLP-valued columns are retained as opaque bytes. Their canonical RLP syntax and semantics,
+transaction-type field combinations, signatures, sender recovery, transaction hashes and
+raw-envelope agreement are not yet checked. Raw envelopes contribute only the prescribed null
+placeholder to `content_hash`, but their actual bytes remain covered by the file hash.
+The writer enables dictionaries on `type`, `from`, `to` and `chain_id`, delta encoding on
+`block_number`, `transaction_index`, `nonce` and `gas_limit`, and RLE for `is_system_tx`.
+Other columns use PLAIN; every column has page statistics. No native transaction blooms are
+specified. These are storage/content checks, not transaction or trie verification.
 
 ### 6.5 `receipts` table
 
@@ -634,7 +656,7 @@ checks byte size, file BLAKE3, footer row count, row-group count and the sum of 
 It rejects unsupported table schema versions, missing files, symlinks and non-regular files.
 Hashing and decoding use the same in-memory bytes. No endpoint is contacted.
 
-For `headers`, `logs` and `withdrawals`, file mode also decodes the table, checks schema/row invariants,
+For `headers`, `transactions`, `logs` and `withdrawals`, file mode also decodes the table, checks schema/row invariants,
 recomputes `content_hash`, checks the decoded count and requires every row's block to fall inside
 the relic range. Other tables report these decoded checks as **not checked**; a valid footer or
 file hash is not a schema or chain check. Aggregate content status is partial only if some table
@@ -663,7 +685,9 @@ checkpoint, era1 accumulator or finality check.
 
 `--after <manifest>` provides predecessor pact context for a continuation. Its table files are
 not checked unless they are part of the requested manifest run. The report names that scope.
-Other table completeness, consensus rules, transaction/receipt/withdrawal roots, era1
+Transaction envelope semantics (including raw/structured agreement and transaction hashes) and
+signature validity/sender recovery are separately reported as **not checked**. Other table
+completeness, consensus rules, transaction/receipt/withdrawal roots, era1
 accumulators, finality, index correctness, producer signatures and checkpoint anchoring remain
 unimplemented. The example in §10.6 is the intended full report, not current executable output.
 The current file checker holds a file and decoded rows in memory and is not a streaming scanner.
@@ -739,10 +763,11 @@ remain covered by the file hash. Other nullable columns are not silently normali
 For example, null encodes as `00`, present empty binary as `010000000000000000`, and present
 binary `aabb` as `010000000000000002aabb`. Adjacent variable-width fields cannot alias. Golden
 primitive and logs-row vectors are in `crates/legacy-format/src/canonical.rs` and `logs.rs`.
-The initial implementation supports these primitives and complete `headers`, `logs` and
-`withdrawals` rows. Other table codecs, including transaction normalization and trace enum
-mappings/order, remain to be implemented
-and tested before their producers can claim conformance.
+The implementation supports these primitives and all columns of `headers`, `transactions`,
+`logs` and `withdrawals`. Transaction parity normalization and raw-envelope exclusion are
+specified above; transaction envelope semantics remain unchecked. Receipt and trace codecs,
+including trace enum mappings/order, remain to be implemented and tested before their producers
+can claim conformance.
 
 ### 11.2 Reorgs at the seal boundary
 

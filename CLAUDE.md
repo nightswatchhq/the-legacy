@@ -12,8 +12,8 @@ implementation-linked amendments, not already supported interfaces.
 2. **Never overstate verification.** Every report, log line, doc and README row must say what was
    actually checked and what was not. `solo clean` currently checks manifest structure, relic
    linkage and the pact chain by default. `--files` adds local byte integrity, Parquet counts and
-   decoded checks for headers/logs/withdrawals, including header coverage and stored links. It
-   reconstructs Ethereum header hashes through Prague for chain ID 1 only. Other chain profiles,
+   decoded checks for headers/transactions/logs/withdrawals, including header coverage and stored
+   links. It reconstructs Ethereum header hashes through Prague for chain ID 1 only. Other chain profiles,
    consensus rules and checkpoint trust remain unchecked; hash consistency is not chain trust.
    This is the single most important rule in the repo: the whole project's
    value is that its claims are true.
@@ -28,11 +28,13 @@ implementation-linked amendments, not already supported interfaces.
 ## Shape
 
 - `crates/legacy-format` - geometry, canonical JSON (JCS), manifests, the pact chain, the registry.
-  Canonical row primitives and typed headers/logs/withdrawals rows and content hashes live here.
+  Canonical row primitives, headers/transactions/logs/withdrawals rows and their content hashes
+  live here.
   No Parquet, no object storage, no JSON-RPC. Shadow and Solo agree on what a relic is by depending
   on this, not by both being careful.
-- `crates/legacy-parquet` - Parquet schemas, shared writer profile, headers/logs/withdrawals codecs and
-  verification of byte buffers against manifest file claims. No sealing, consensus validation or checkpoint verification.
+- `crates/legacy-parquet` - Parquet schemas, shared writer profile and codecs for the implemented
+  tables, plus verification against manifest file claims. No sealing, consensus validation or
+  checkpoint verification.
 - `crates/shadow` - the six ingestion sources (§11). All skeleton so far.
 - `crates/solo` - serving (§13) and cleaning (§10). Manifest checks and optional local file checks
   exist; serving, trie rebuilding and checkpoint anchoring do not.

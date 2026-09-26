@@ -68,6 +68,14 @@ pub fn verify_file(bytes: Bytes, entry: &FileEntry, manifest: &Manifest) -> Resu
                 true,
             )
         }
+        Table::Transactions => {
+            let rows = crate::transactions::read_transactions(bytes)?;
+            (
+                legacy_format::transactions::content_hash(&rows)?,
+                rows.len(),
+                rows.iter().all(|r| range.contains(r.block_number)),
+            )
+        }
         Table::Logs => {
             let rows = crate::logs::read_logs(bytes)?;
             (

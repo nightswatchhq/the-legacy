@@ -20,6 +20,7 @@ pub mod manifest;
 pub mod pact;
 pub mod registry;
 pub mod relic;
+pub mod transactions;
 pub mod withdrawals;
 
 pub use error::Error;
