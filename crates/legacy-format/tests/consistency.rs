@@ -111,3 +111,55 @@ fn public_link_checks_reject_unvalidated_disorder_and_duplicate_rows() {
     assert!(log_transaction_links(&[], &[tx.clone(), tx]).is_err());
     assert!(log_receipt_links(&[], &[receipt.clone(), receipt]).is_err());
 }
+
+#[test]
+fn receipt_blooms_group_logs_and_check_receipts_without_logs() {
+    use legacy_format::bloom::{logs_bloom, receipt_blooms};
+    let mut first = log();
+    first.topics = vec![[1; 32], [2; 32], [3; 32], [4; 32]];
+    let mut second = first.clone();
+    second.log_index = 1;
+    second.address = [5; 20];
+    let logs = [first, second];
+    let mut receipt = receipt_row();
+    receipt.logs_bloom = logs_bloom(&logs).unwrap();
+    let mut empty = receipt.clone();
+    empty.transaction_index += 1;
+    empty.logs_bloom = [0; 256];
+    receipt_blooms(&logs, &[receipt.clone(), empty.clone()]).unwrap();
+    empty.logs_bloom[0] = 1;
+    assert!(receipt_blooms(&logs, &[receipt.clone(), empty]).is_err());
+    receipt.logs_bloom[0] ^= 1;
+    assert!(receipt_blooms(&logs, &[receipt]).is_err());
+    receipt_blooms(&[], &[]).unwrap();
+}
+
+#[test]
+fn blooms_cover_addresses_and_topics_but_not_data_or_multiplicity() {
+    use legacy_format::bloom::logs_bloom;
+    let mut row = log();
+    row.topics = vec![[1; 32]];
+    let expected = logs_bloom(std::slice::from_ref(&row)).unwrap();
+    row.data = vec![0xff; 100];
+    assert_eq!(logs_bloom(std::slice::from_ref(&row)).unwrap(), expected);
+    let mut repeated = row.clone();
+    repeated.log_index += 1;
+    assert_eq!(logs_bloom(&[row.clone(), repeated]).unwrap(), expected);
+    row.address = [0xff; 20];
+    assert_ne!(logs_bloom(std::slice::from_ref(&row)).unwrap(), expected);
+    row = log();
+    row.topics = vec![[2; 32]];
+    assert_ne!(logs_bloom(&[row]).unwrap(), expected);
+    assert_eq!(logs_bloom(&[]).unwrap(), [0; 256]);
+}
+
+#[test]
+fn bloom_checker_does_not_silently_drop_orphan_or_disordered_logs() {
+    use legacy_format::bloom::receipt_blooms;
+    let row = log();
+    assert!(receipt_blooms(std::slice::from_ref(&row), &[]).is_err());
+    let mut receipt = receipt_row();
+    receipt.transaction_hash = [0xff; 32];
+    assert!(receipt_blooms(std::slice::from_ref(&row), &[receipt]).is_err());
+    assert!(receipt_blooms(&[row.clone(), row], &[receipt_row()]).is_err());
+}

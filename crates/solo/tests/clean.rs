@@ -710,7 +710,10 @@ fn receipt_row() -> legacy_format::receipts::ReceiptRow {
         status: Some(1),
         post_state: None,
         cumulative_gas_used: u64::MAX,
-        logs_bloom: [0x22; 256],
+        logs_bloom: legacy_format::bloom::logs_bloom(
+            &legacy_parquet::logs::read_logs(log_fixture(8192).0.into()).unwrap(),
+        )
+        .unwrap(),
         gas_used: Some(21000),
         contract_address: Some([0x33; 20]),
         effective_gas_price: Some(vec![1, 2]),
@@ -766,6 +769,7 @@ fn all_core_tables_pass_link_checks_without_claiming_trie_verification() {
         "transaction_receipt_links",
         "log_transaction_links",
         "log_receipt_links",
+        "receipt_blooms",
     ] {
         assert_eq!(report["checks"][check], "pass");
         assert_eq!(report["relic_checks"][0][check], "pass");
@@ -898,6 +902,7 @@ fn link_reports_distinguish_missing_tables_empty_tables_and_partial_runs() {
         "transaction_receipt_links",
         "log_transaction_links",
         "log_receipt_links",
+        "receipt_blooms",
     ] {
         assert!(report["checks"][check]
             .as_str()
@@ -941,6 +946,7 @@ fn link_reports_distinguish_missing_tables_empty_tables_and_partial_runs() {
         "transaction_receipt_links",
         "log_transaction_links",
         "log_receipt_links",
+        "receipt_blooms",
     ] {
         assert_eq!(report["checks"][check], "pass");
     }
@@ -948,5 +954,48 @@ fn link_reports_distinguish_missing_tables_empty_tables_and_partial_runs() {
         .as_str()
         .unwrap()
         .starts_with("not checked"));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn resealed_wrong_receipt_bloom_fails_and_missing_logs_remain_unchecked() {
+    let dir = scratch("receipt-bloom");
+    let paths = write_local_chain(&dir, 1);
+    let path = &paths[0];
+    attach_linked_tables(path);
+    let file = path.parent().unwrap().join("receipts.parquet");
+    let mut rows =
+        legacy_parquet::receipts::read_receipts(std::fs::read(&file).unwrap().into()).unwrap();
+    rows[0].logs_bloom[0] ^= 1;
+    let (bytes, entry) = legacy_parquet::receipts::write_receipts(&rows).unwrap();
+    std::fs::write(&file, bytes).unwrap();
+    reseal_first(path, |m| {
+        let target = m
+            .files
+            .iter_mut()
+            .find(|f| f.table == Table::Receipts)
+            .unwrap();
+        *target = entry;
+    });
+    assert_failed(
+        &solo(&[path], &["--files", "--json"]),
+        "receipt bloom differs from supplied logs at block 1, transaction 0",
+    );
+    reseal_first(path, |m| m.files.retain(|f| f.table != Table::Logs));
+    let out = solo(&[path], &["--files", "--json"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(report["checks"]["receipt_blooms"]
+        .as_str()
+        .unwrap()
+        .starts_with("not checked"));
+    assert!(report["relic_checks"][0]["receipt_blooms"]
+        .as_str()
+        .unwrap()
+        .contains("logs or receipts absent"));
     std::fs::remove_dir_all(dir).unwrap();
 }

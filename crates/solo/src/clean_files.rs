@@ -45,6 +45,7 @@ pub struct RelicReport {
     pub transaction_receipt_links: &'static str,
     pub log_transaction_links: &'static str,
     pub log_receipt_links: &'static str,
+    pub receipt_blooms: &'static str,
 }
 
 pub fn summarize(
@@ -172,6 +173,7 @@ pub fn check(
             transaction_receipt_links: "not checked (transactions or receipts absent)",
             log_transaction_links: "not checked (logs or transactions absent)",
             log_receipt_links: "not checked (logs or receipts absent)",
+            receipt_blooms: "not checked (logs or receipts absent)",
         };
         let context = |error| format!("relic {}: {error}", manifest.relic_index());
         if let (Some(tx), Some(receipts)) = (&transactions, &receipts) {
@@ -185,6 +187,8 @@ pub fn check(
         if let (Some(logs), Some(receipts)) = (&logs, &receipts) {
             legacy_format::consistency::log_receipt_links(logs, receipts).map_err(context)?;
             relational.log_receipt_links = PASS;
+            legacy_format::bloom::receipt_blooms(logs, receipts).map_err(context)?;
+            relational.receipt_blooms = PASS;
         }
         reports.relics.push(relational);
     }

@@ -129,6 +129,7 @@ fn clean(
         clean_files::summarize(&local_report.relics, |r| r.transaction_receipt_links);
     let log_tx_links = clean_files::summarize(&local_report.relics, |r| r.log_transaction_links);
     let log_receipt_links = clean_files::summarize(&local_report.relics, |r| r.log_receipt_links);
+    let receipt_blooms = clean_files::summarize(&local_report.relics, |r| r.receipt_blooms);
     let byte_status = if files {
         "pass"
     } else {
@@ -192,7 +193,9 @@ fn clean(
                 "transaction_receipt_links": tx_receipt_links,
                 "log_transaction_links": log_tx_links,
                 "log_receipt_links": log_receipt_links,
-                "receipt_consistency": "not checked (blooms and derived fields not implemented)",
+                "receipt_blooms": receipt_blooms,
+                "receipt_consistency": "not checked (derived fields not implemented)",
+                "header_blooms": "not checked (not implemented)",
                 "receipts_root": "not checked (not implemented)",
                 "withdrawals_root": "not checked (not implemented)",
                 "checkpoint_anchor": "not checked (not implemented)",
@@ -248,7 +251,14 @@ fn clean(
                 relic.log_receipt_links
             );
         }
-        println!("NOT checked receipt blooms or derived fields");
+        println!("receipt blooms: {receipt_blooms}");
+        for relic in &local_report.relics {
+            println!(
+                "relic {} receipt blooms: {}",
+                relic.relic_index, relic.receipt_blooms
+            );
+        }
+        println!("NOT checked header blooms or receipt derived fields");
         println!("NOT checked era1 accumulator, finality, index sidecars");
         println!("scope       requested manifests only; --after supplies predecessor context, not verified file coverage");
         if traces > 0 {

@@ -9,6 +9,7 @@
 //! The spec constants that matter are in [`relic`]: a relic is 8192 blocks, so the block-to-relic
 //! mapping is a shift rather than a division.
 
+pub mod bloom;
 pub mod canonical;
 pub mod consistency;
 pub mod error;

@@ -13,6 +13,8 @@ pub enum ConsistencyError {
     Logs(#[from] crate::logs::LogError),
     #[error("transaction and receipt row counts differ")]
     Count,
+    #[error("receipt bloom differs from supplied logs at block {0}, transaction {1}")]
+    Bloom(u64, u32),
     #[error("transaction/receipt key, hash or type differs at block {0}, transaction {1}")]
     Receipt(u64, u32),
     #[error("log has no matching {table} key/hash at block {block}, transaction {transaction}")]

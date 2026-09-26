@@ -707,8 +707,9 @@ checkpoint, era1 accumulator or finality check.
 `--after <manifest>` provides predecessor pact context for a continuation. Its table files are
 not checked unless they are part of the requested manifest run. The report names that scope.
 Transaction envelope semantics (including raw/structured agreement and transaction hashes) and
-signature validity/sender recovery are separately reported as **not checked**. Receipt bloom
-contents and derived fields still report **not checked** under `receipt_consistency`.
+signature validity/sender recovery are separately reported as **not checked**. Receipt derived
+fields still report **not checked** under `receipt_consistency`; header bloom aggregation reports
+**not checked** under `header_blooms`.
 Other table completeness, consensus rules, transaction/receipt/withdrawal roots, era1
 accumulators, finality, index correctness, producer signatures and checkpoint anchoring remain
 unimplemented. The example in §10.6 is the intended full report, not current executable output.
@@ -718,6 +719,11 @@ After the file checks, the cleaner compares available tables within each request
   exactly by `(block_number, transaction_index)`, `transaction_hash` and `type`.
 - `log_transaction_links`: each log must match a transaction by block/index and transaction hash.
 - `log_receipt_links`: each log must match a receipt by block/index and transaction hash.
+- `receipt_blooms`: reconstruct each receipt's 256-byte Ethereum bloom from its supplied logs'
+  addresses and topics, and require exact equality, including all-zero blooms for receipts
+  without logs. Log references must pass first. For each address/topic, take the first three
+  big-endian 16-bit pairs of Keccak-256, mask each to 11 bits, and set that bit in the bloom's
+  big-endian byte representation. See [Geth's reference implementation](https://github.com/ethereum/go-ethereum/blob/master/core/types/bloom9.go).
 
 Each check runs whenever both of its tables are listed, independently of the other checks. A
 missing table reports **not checked**, never an assumed empty table. Present empty tables may
@@ -728,8 +734,10 @@ A mismatch fails the whole run before any success report is printed.
 
 These checks prove agreement among supplied rows, not completeness, transaction authenticity or
 correct execution. Deleting a transaction and its receipt together (and any associated logs)
-can still pass; transaction indices need not be contiguous. Receipt blooms, derived gas/fees,
-log payload correctness and trie roots remain unchecked. The typed table codecs remain usable
+can still pass; transaction indices need not be contiguous. Blooms do not cover log data,
+ordering or multiplicity, and collisions can conceal changes to addresses/topics. Matching a
+bloom does not prove log completeness. Header bloom aggregation, derived gas/fees, log payload
+correctness and trie roots remain unchecked. The typed table codecs remain usable
 on independent slices; these relationships are enforced by the cleaner when counterparts exist.
 
 The file checker retains decoded transactions, receipts and logs for one relic until its link
