@@ -620,9 +620,18 @@ Fork activation, complete receipt/log sets and trie construction are not impleme
 encoder. Independent synthetic RLP vectors and their Python generator are checked in under
 `crates/legacy-format/tests/fixtures/`; they are not authenticated chain fixtures.
 
-Cleaning will rebuild the trie from these values and compare it against `headers.receipts_root`.
-That root comparison is still **not checked** by the current executable. Encoding support must
-not be presented as trie verification or checkpoint trust.
+For chain ID 1, cleaning rebuilds the ordered Merkle-Patricia trie from those values and compares
+the root against `headers.receipts_root`. It requires headers, receipts and logs to be present,
+and requires receipt indices to be contiguous from zero within every block. Empty blocks use the
+Ethereum empty trie root. The implementation uses a pre-encoded ordered trie builder, so receipt
+values are inserted without an extra RLP string wrapper. It is tested against an independent,
+small recursive MPT oracle across receipt-index boundaries 127, 128 and 256.
+
+The result is reported as `receipts_root`. It proves that the supplied receipt rows and log bytes
+produce the supplied header field, not that the header belongs to the canonical chain. It does
+not validate transaction trie values, execution, receipt completeness, fork activation or a
+checkpoint. Other chains report an unsupported receipt profile. Missing any required table
+reports **not checked**, rather than assuming an empty one.
 
 ### 10.3 Withdrawals root
 

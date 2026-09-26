@@ -1095,8 +1095,16 @@ fn ethereum_gas_accounting_detects_resealed_lies_and_skips_unknown_chains() {
     )
     .unwrap();
     headers[1].gas_used = 21000;
+    let log_file = directory.join("logs.parquet");
+    let log_bytes = std::fs::read(&log_file).unwrap();
+    let logs = legacy_parquet::logs::read_logs(log_bytes.clone().into()).unwrap();
     let mut parent = [0; 32];
     for h in &mut headers {
+        h.receipts_root = if h.block_number == 1 {
+            legacy_format::ethereum_receipts::receipt_root(1, &receipts, &logs).unwrap()
+        } else {
+            legacy_format::ethereum_receipts::receipt_root(h.block_number, &[], &[]).unwrap()
+        };
         h.parent_hash = parent;
         h.block_hash = legacy_format::ethereum::header_hash(h).unwrap();
         parent = h.block_hash;
@@ -1119,6 +1127,35 @@ fn ethereum_gas_accounting_detects_resealed_lies_and_skips_unknown_chains() {
     let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(report["checks"]["receipt_gas"], "pass");
     assert_eq!(report["relic_checks"][0]["receipt_gas"], "pass");
+    assert_eq!(report["checks"]["receipts_root"], "pass");
+    assert!(report["checks"]["checkpoint_anchor"]
+        .as_str()
+        .unwrap()
+        .starts_with("not checked"));
+    let mut changed_logs = logs.clone();
+    changed_logs[0].data.push(0xff);
+    let (bytes, entry) = legacy_parquet::logs::write_logs(&changed_logs).unwrap();
+    std::fs::write(&log_file, bytes).unwrap();
+    let mut original: Manifest = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    let original_entry = original
+        .files
+        .iter_mut()
+        .find(|f| f.table == Table::Logs)
+        .unwrap()
+        .clone();
+    reseal_first(path, |m| {
+        let target = m.files.iter_mut().find(|f| f.table == Table::Logs).unwrap();
+        *target = entry;
+    });
+    assert_failed(
+        &solo(&[path], &["--files", "--json"]),
+        "reconstructed receipt root differs from header at block 1",
+    );
+    std::fs::write(&log_file, log_bytes).unwrap();
+    reseal_first(path, |m| {
+        let target = m.files.iter_mut().find(|f| f.table == Table::Logs).unwrap();
+        *target = original_entry;
+    });
     receipts[0].gas_used = Some(1);
     let (bytes, entry) = legacy_parquet::receipts::write_receipts(&receipts).unwrap();
     std::fs::write(&receipt_file, bytes).unwrap();

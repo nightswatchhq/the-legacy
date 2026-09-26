@@ -132,6 +132,7 @@ fn clean(
     let receipt_blooms = clean_files::summarize(&local_report.relics, |r| r.receipt_blooms);
     let header_blooms = clean_files::summarize(&local_report.relics, |r| r.header_blooms);
     let receipt_gas = clean_files::summarize(&local_report.relics, |r| r.receipt_gas);
+    let receipts_root = clean_files::summarize(&local_report.relics, |r| r.receipts_root);
     let byte_status = if files {
         "pass"
     } else {
@@ -199,7 +200,7 @@ fn clean(
                 "receipt_consistency": "not checked (fees and other derived fields not implemented)",
                 "receipt_gas": receipt_gas,
                 "header_blooms": header_blooms,
-                "receipts_root": "not checked (not implemented)",
+                "receipts_root": receipts_root,
                 "withdrawals_root": "not checked (not implemented)",
                 "checkpoint_anchor": "not checked (not implemented)",
                 "traces": if traces > 0 {
@@ -240,7 +241,7 @@ fn clean(
             println!("NOT checked file sizes, file hashes, Parquet metadata or table contents");
         }
         println!("header hashes/linkage: {header_hash_status} (Ethereum layout through Prague; requested files only)");
-        println!("NOT checked consensus rules/fork schedule, other table completeness, transactions/receipts/withdrawals roots, checkpoint anchor, producer signatures");
+        println!("NOT checked consensus rules/fork schedule, other table completeness, transactions/withdrawals roots, checkpoint anchor, producer signatures");
         println!("NOT checked transaction envelopes, RLP semantics, transaction hashes, signatures or sender recovery");
         println!("transaction/receipt links: {tx_receipt_links}");
         println!("log/transaction links: {log_tx_links}");
@@ -273,6 +274,13 @@ fn clean(
             println!(
                 "relic {} receipt gas accounting: {}",
                 relic.relic_index, relic.receipt_gas
+            );
+        }
+        println!("receipt trie roots: {receipts_root}");
+        for relic in &local_report.relics {
+            println!(
+                "relic {} receipt trie roots: {}",
+                relic.relic_index, relic.receipts_root
             );
         }
         println!("NOT checked receipt fees or other derived fields");
