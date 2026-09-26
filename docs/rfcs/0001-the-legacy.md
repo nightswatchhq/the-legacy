@@ -6,6 +6,10 @@
 - **Date:** 2026-09-14
 - **Repo:** github.com/nightswatchhq/the-legacy
 
+**Follow-up:** [RFC-0002](0002-the-backfill-layer.md) proposes sealed-only serving, a native
+reader, transaction sidecars, cost-bounded ingestion and a re-sequenced roadmap. Its proposed
+interfaces are not implemented by the current binaries; its §8 tracks the amendments required.
+
 ---
 
 ## 1. Abstract
@@ -85,7 +89,7 @@ A relic covers a fixed, contiguous block range. Two candidate sizes were conside
   `era1.md`), the accumulator is computed as `hash_tree_root` of an SSZ `List[HeaderRecord, 8192]`
   where `HeaderRecord = {block_hash: Bytes32, total_difficulty: Uint256}`, and "due to the
   accumulator size limit of 8192, the maximum number of blocks in an Era1 batch is also 8192."
-  Aligning relics to era1 epochs pre-merge lets a Shadow map exactly one era1 file to one relic and
+  Aligning relics to era1 epochs pre-merge lets a Shadow map a full aligned era1 file to one relic and
   carry the SSZ accumulator root into the manifest as a verifiable boundary artifact.
 - **10,000 blocks**, a round decimal boundary matching cryo's common chunking and easy human
   addressing.
@@ -93,11 +97,17 @@ A relic covers a fixed, contiguous block range. Two candidate sizes were conside
 **Decision:** relics use **8192 blocks**, both pre- and post-merge, for a single uniform geometry per
 chain. Rationale: a uniform power-of-two range reduces the block-number to relic mapping to a shift
 (`relic_index = block >> 13`), keeps pre/post-merge tooling identical, and preserves the
-one-era1-file-to-one-relic invariant that makes pre-merge cleaning cheap. The 10,000 option is
+full-era1-file-to-one-relic mapping that makes pre-merge cleaning cheap. The 10,000 option is
 rejected because it desynchronizes from era1, forcing a Shadow to split/join era1 epochs and
 recompute accumulators. Chains without an era1 corpus (most L2s) use the same 8192 geometry. The
 block range is recorded explicitly in every manifest (`blocks_per_relic`), so the constant is
 spec-versioned and can change for future silos without breaking existing relics.
+
+The [era1 format](https://github.com/eth-clients/e2store-format-specs/blob/main/formats/era1.md)
+allows **at most** 8192 records, not necessarily exactly 8192. A partial or unaligned input must
+be staged until an entire relic range is available. In particular, the merge-boundary relic
+requires both pre-merge and post-merge data; a partial era1 accumulator does not cover that whole
+relic. Its header-chain trust needs explicit handling rather than treating it as a full epoch.
 
 ## 6. Relic Contents: Parquet Tables
 
@@ -117,21 +127,30 @@ reassembly.
 
 ### 6.1 Common Parquet writer settings (normative)
 
-All relic Parquet files MUST be written with a fixed, canonical configuration so two independent
-Shadows produce content-identical files (§11.1):
+All relic Parquet files MUST use the following writer configuration. These settings reduce byte
+drift; content identity is defined by canonical rows (§11.1), not by Parquet framing:
 
 - **Compression:** Zstandard, level 3. Rationale: banteg's full cryo extraction "of every block from
   Erigon consumed 430 GB with zstd level 3 compression"; level 3 is the de-facto community setting
   and near the throughput/ratio knee.
-- **Row-group size:** 128 MiB uncompressed target per row group (approximately 256k to 1M rows
-  depending on table); row-group count is recorded per file in the manifest.
-- **Data-page size:** 1 MiB.
+- **Row-group size:** 128 MiB of canonical row bytes (§11.1), including presence bytes and length
+  prefixes. Append a row if it fits; otherwise start a new group. An individual oversized row
+  occupies one group. An exact fit stays in the current group. Empty tables have zero groups.
+  This is a deterministic uncompressed sizing measure, not Parquet's estimated encoded size.
+- **Data-page size:** 1 MiB target, checked in batches of 1024 values; no separate row-count cap.
 - **Dictionary encoding:** enabled for low-cardinality byte columns (addresses, topic0, tx type);
-  disabled where the dictionary would exceed the page.
+  with a 1 MiB dictionary-page limit and fallback to the column's non-dictionary encoding.
 - **Parquet writer version:** 2.0 (data page V2), fixed.
 - **Statistics:** min/max enabled on all sort-key and numeric columns.
 - **No creation timestamps** in Parquet/Arrow key-value metadata; the `created_by` string is pinned
-  to a fixed spec-defined constant.
+  to `the-legacy/spec-1`.
+
+The initial reference codec pins arrow-rs/Parquet to 59.3.0. For `logs`, dictionaries are enabled
+only on `address` and `topic0`; the three numeric columns use `DELTA_BINARY_PACKED`, all remaining
+non-dictionary value encodings are `PLAIN`. Native blooms on `address` and `topic0..topic3` use
+false-positive probability 0.01 and a configured maximum distinct-value estimate of 100,000 per
+column chunk. Page min/max statistics are enabled on every column. This pins the initial writer
+profile, not a guarantee of byte identity across future codec versions.
 
 ### 6.2 Encoding notes
 
@@ -204,9 +223,11 @@ arrays (RLP-integer convention) so re-encoding for trie work is a memcpy.
 
 Sort order: (`block_number`, `transaction_index`). The typed-envelope bytes are reconstructable from
 these columns for trie verification. **Decision:** `raw_envelope` is a nullable optional column,
-defaulting **on** for the archive-RPC and era1 Shadows (which already hold the raw bytes, making
-cleaning a pure hash check) and **off** for the Reth/Erigon Shadows to save space; cleaning handles
-both.
+defaulting **on** for the archive-RPC and era1 Shadows and **off** for the Reth/Erigon Shadows to
+save space; cleaning handles both. era1 supplies encoded transaction bodies; a JSON-RPC block
+response may instead require reconstructing the signed envelope from fields. Stored envelopes
+must agree with the structured columns. Cleaning still rebuilds the ordered trie and authenticates
+its header root; having raw bytes does not reduce it to a file or transaction hash check.
 
 ### 6.5 `receipts` table
 
@@ -251,7 +272,10 @@ essential to rebuild the receipts trie leaf bytes correctly (§10.2).
 | `topic3` | FIXED_LEN_BYTE_ARRAY(32) | binary | yes | PLAIN | **bloom** |
 | `data` | BYTE_ARRAY | binary | no | PLAIN | unindexed event data |
 
-Sort order: (`block_number`, `transaction_index`, `log_index`). Per the JSON-RPC spec a log object
+Sort order: (`block_number`, `transaction_index`, `log_index`), strictly increasing with no duplicate
+keys. Within a block, `log_index` strictly increases even across transaction boundaries. Topics
+form a contiguous prefix of zero to four values: a non-null topic cannot follow a null topic.
+A present all-zero topic is distinct from an absent topic. Per the JSON-RPC spec a log object
 has a `removed` field; it is **never** stored: relics are finalized-only, so every log is canonical
 and Solo always serializes `removed: false`.
 
@@ -264,6 +288,18 @@ and Solo always serializes `removed: false`.
 | `validator_index` | INT64 | uint64 | no | |
 | `address` | FIXED_LEN_BYTE_ARRAY(20) | binary | no | recipient |
 | `amount` | INT64 | uint64 | no | Gwei |
+
+Rows are strictly ordered by (`block_number`, `index`), with the global `index` also strictly
+increasing across blocks. The row codec checks monotonicity but does not infer completeness from
+it. Under [EIP-4895](https://eips.ethereum.org/EIPS/eip-4895), `amount` is nonzero and remains in
+Gwei; the global index is distinct from the withdrawal's position used as its per-block trie key.
+An empty table is valid. Determining whether the table is required at a particular fork, whether
+withdrawals are missing, and whether they match the header root requires later chain checks.
+
+The v1 withdrawals writer uses the shared §6.1 profile, `DELTA_BINARY_PACKED` for all four uint64
+columns and dictionary encoding for `address` (PLAIN fallback). All columns have page statistics;
+no withdrawal bloom filters are specified yet. Each canonical row is exactly 57 bytes, including
+presence markers, so the row-group sizing rule applies without an encoded-size estimate.
 
 ### 6.8 `traces` table (optional tier)
 
@@ -370,6 +406,11 @@ a future spec version can migrate.
 - `pact_root` (hex32; §8.4)
 - `hash_algo` (string, `"blake3"`)
 
+Each v1 data-table `name` MUST be exactly `<table>.parquet` from §6, not an arbitrary path. There
+is one file per table and duplicate names are invalid. This also prevents a local cleaner from
+following manifest-supplied absolute paths or parent-directory traversal. Future sidecar entries
+need their own schema definition; see RFC-0002 P3.
+
 ### 8.4 Pact root algorithm
 
 The pact root is a running hash chain over relic manifests:
@@ -396,6 +437,11 @@ The computed `pact_root` is written back into the manifest's `pact_root` field, 
 single 32-byte `pact_root`; if equal, every relic and every file byte-for-byte agrees (by BLAKE3
 collision resistance and the hash-chain construction). If they differ, a binary search over relic
 manifest hashes localizes the first divergent relic in O(log n) requests.
+
+This compares mirrors of an **exact manifest chain**, not arbitrary independent producers.
+Different Parquet bytes or producer metadata change the manifest and pact even when canonical
+table contents agree. Cross-producer conformance compares `content_hash` for matching chain,
+schema version, relic range and table (§11.1); it does not require matching pact roots.
 
 ### 8.5 Registry document
 
@@ -563,13 +609,36 @@ claim about blob contents. This exclusion is deliberate and stated plainly.
 correctness. **Not verifiable:** traces (§6.8); `removed` logs (never present - relics are
 finalized-only).
 
+### 10.7 Current local cleaning implementation
+
+`solo clean [--json] <manifest>...` checks manifest structure, relic boundary linkage and the
+pact chain. `--files` additionally resolves each canonical table name beside its manifest and
+checks byte size, file BLAKE3, footer row count, row-group count and the sum of row-group rows.
+It rejects unsupported table schema versions, missing files, symlinks and non-regular files.
+Hashing and decoding use the same in-memory bytes. No endpoint is contacted.
+
+For `logs` and `withdrawals`, file mode also decodes the table, checks schema/row invariants,
+recomputes `content_hash`, checks the decoded count and requires every row's block to fall inside
+the relic range. Other tables report these decoded checks as **not checked**; a valid footer or
+file hash is not a schema or chain check. Aggregate content status is partial only if some table
+contents were actually checked, and unchecked if none were. A failure exits nonzero without
+printing a success report. Success is limited to the explicitly reported checks.
+
+`--after <manifest>` provides predecessor pact context for a continuation. Its table files are
+not checked unless they are part of the requested manifest run. The report names that scope.
+Table completeness, reconstructed header linkage, transaction/receipt/withdrawal roots, era1
+accumulators, finality, index correctness, producer signatures and checkpoint anchoring remain
+unimplemented. The example in §10.6 is the intended full report, not current executable output.
+The current file checker holds a file and decoded rows in memory and is not a streaming scanner.
+
 ## 11. Ingestion (Shadow)
 
 Six Shadow sources, all producing the same relic format:
 
 1. **Archive JSON-RPC** - parallel backfill via `eth_getBlockByNumber`,
    `eth_getBlockReceipts`/`eth_getTransactionReceipt`, `eth_getLogs`. Bootstrapping only (slow,
-   rate-limited). Holds raw bytes, so writes `raw_envelope`.
+   rate-limited). Stores `raw_envelope`, reconstructing it from response fields when necessary
+   (§6.4). RFC-0002 P4 proposes a cost-bounded first-class producer for silos without local sources.
 2. **Reth static files** - read the `headers`, `transactions`, `receipts` NippyJar segments
    directly. Reth static files are immutable NippyJar files (a bincode-serialized config sidecar
    accompanies each) organized by block range; blocks-per-file is configurable
@@ -577,7 +646,8 @@ Six Shadow sources, all producing the same relic format:
 3. **Erigon 3 snapshots** - read `.seg` block snapshot files (seg-compressed word streams; `.idx`
    accessors map block to offset). Note: Erigon's `.kv/.bt/.kvei` triples are *state-domain* files
    and are out of scope; The Legacy consumes only the block/txn/receipt `.seg` snapshots.
-4. **era1** - one era1 file per pre-merge relic. Per the era1 spec each block-tuple is
+4. **era1** - one full aligned era1 file per pre-merge relic; partial inputs are staged (§5).
+   Per the era1 spec each block-tuple is
    `CompressedHeader | CompressedBody | CompressedReceipts | TotalDifficulty` (snappy-framed RLP),
    followed by the SSZ `Accumulator` and `BlockIndex`; it is used as a verifiable input, and its
    accumulator root is carried into the manifest.
@@ -597,8 +667,9 @@ ordering, and page boundaries drift between library versions), so the spec defin
 **canonical row-hash** level, not the file-byte level:
 
 - Rows are emitted in the normative sort order (§6) - deterministic and source-independent.
-- A table's **content hash** is `BLAKE3` over the concatenation of per-row canonical encodings (each
-  field in a fixed order and fixed width / RLP-integer form), independent of Parquet framing.
+- A table's **content hash** is `BLAKE3` over the concatenation of canonical row encodings defined
+  below, with no prefix, row count, delimiter, or suffix. The empty table hashes the empty byte
+  string. Compare these hashes only within the same chain, schema version, relic range and table.
 - The manifest records both the per-file `blake3` (byte-level integrity of *this* copy) and a
   per-file `content_hash` (framing-independent, for cross-producer agreement).
 - Writer settings (§6.1) are pinned to minimize byte drift, so two Shadows on the same arrow-rs
@@ -606,6 +677,34 @@ ordering, and page boundaries drift between library versions), so the spec defin
 
 This makes cross-producer verification (Reth vs Firehose vs Erigon) meaningful even when Parquet
 bytes differ, and is the only verification available for the traces tier.
+
+**Canonical row encoding, v1.** Fields appear in the column order of the corresponding §6 table.
+Every field, including required fields, begins with one presence byte: `00` for null (no payload),
+or `01` for present (followed by the payload). Null in a required field is invalid. Schema types
+and widths are external to the byte stream; there are no type tags or field names.
+
+| Logical type | Present payload, after `01` |
+|---|---|
+| uint8 / uint32 / uint64 | Exactly 1 / 4 / 8 bytes, unsigned, big-endian |
+| bool | Exactly one byte: `00` for false, `01` for true |
+| fixed binary(N) | Exactly N raw bytes |
+| binary, including opaque RLP byte strings | u64 big-endian byte length, then those exact bytes |
+| uint256 magnitude | u64 big-endian byte length, then 0 to 32 minimal big-endian bytes; no leading zero; zero has length 0 |
+
+The uint256 payload is the integer's magnitude, not its RLP prefix. RLP-valued columns retain
+their canonical RLP bytes and use the binary rule. Missing nullable columns are materialized as
+null at their schema position; unknown columns require a schema-version definition. The optional
+`transactions.raw_envelope` is an exception: it always contributes `00` to content hashing,
+whether stored or absent, because it is a redundant transport representation. A cleaner that
+uses it MUST establish that it agrees with the structured transaction columns; its stored bytes
+remain covered by the file hash. Other nullable columns are not silently normalized away.
+
+For example, null encodes as `00`, present empty binary as `010000000000000000`, and present
+binary `aabb` as `010000000000000002aabb`. Adjacent variable-width fields cannot alias. Golden
+primitive and logs-row vectors are in `crates/legacy-format/src/canonical.rs` and `logs.rs`.
+The initial implementation supports these primitives and complete `logs` and `withdrawals` rows. Other table
+codecs, including transaction normalization and trace enum mappings/order, remain to be implemented
+and tested before their producers can claim conformance.
 
 ### 11.2 Reorgs at the seal boundary
 
@@ -903,8 +1002,10 @@ All figures are **design targets, not measurements**, with reasoning stated:
 - **Malicious mirror serving fabricated relics:** defeated by **cleaning** - any client rebuilds
   tries and checks header roots + checkpoint anchor; fabricated data fails.
 - **Malicious producer:** optional manifest signatures (ethereum-secp256k1 or ed25519) plus
-  **cross-producer pact comparison** - independent Shadows must agree on per-file `content_hash`;
-  divergence is detectable and localizable in O(log n).
+  **cross-producer content comparison** for matching tables and ranges. A matching content hash
+  establishes agreement, not correctness or independent provenance. Pact comparison and O(log n)
+  divergence localization apply to mirrors of the same manifest chain, not differently framed
+  independent productions. Cleaning supplies the chain-commitment checks.
 - **Poisoned traces:** **explicitly not defended by cryptography.** Traces are not header-committed;
   a malicious producer can fabricate them and no root will catch it. Trust in traces rests solely on
   cross-producer agreement or local re-execution. Stated plainly.
@@ -939,7 +1040,8 @@ All figures are **design targets, not measurements**, with reasoning stated:
   headers/txs/receipts/logs relics on R2 + Reth static-file Shadow. *Acceptance:* Solo answers
   `eth_getLogs`/`eth_getTransactionByHash`/`eth_getTransactionReceipt`/block reads for finalized
   mainnet with Geth-parity results; a fresh mirror bootstraps from the registry and passes cleaning
-  end-to-end; pact roots match across two independent producers.
+  end-to-end; canonical table content hashes match across two independent producers, and exact
+  mirrors agree on pact roots.
 - **Stage 2 - Continuous + verifiable + monetizable.** Reth ExEx Shadow (continuous sealing) +
   Dispatch/Horizon (GraphTally) integration + MCP + x402 + `verify_receipt` proofs. *Acceptance:*
   ExEx seals new relics automatically at finality with no manual step; MCP `verify_receipt` returns

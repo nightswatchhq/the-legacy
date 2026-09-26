@@ -2,6 +2,8 @@
 
 A sealed, verifiable history corpus for EVM chains, plus the binary that serves it.
 **[RFC-0001](docs/rfcs/0001-the-legacy.md) is the specification. This repository implements it.**
+[RFC-0002](docs/rfcs/0002-the-backfill-layer.md) proposes the backfill follow-up; its §8 lists
+implementation-linked amendments, not already supported interfaces.
 
 ## Ground rules
 
@@ -9,8 +11,9 @@ A sealed, verifiable history corpus for EVM chains, plus the binary that serves 
    before changing either. A spec change and the code change that follows it belong in the same PR.
 2. **Never overstate verification.** Every report, log line, doc and README row must say what was
    actually checked and what was not. `solo clean` currently checks manifest structure, relic
-   linkage and the pact chain, and nothing else - it says so, and it keeps saying so until each
-   remaining check is real. This is the single most important rule in the repo: the whole project's
+   linkage and the pact chain by default. `--files` adds local byte integrity, Parquet counts and
+   decoded checks for logs/withdrawals; it names every remaining unchecked table and chain check.
+   This is the single most important rule in the repo: the whole project's
    value is that its claims are true.
 3. **Traces are not header-committed.** No cryptographic claim about the traces tier is acceptable
    anywhere - code, comments, docs, marketing. Cross-producer agreement or local re-execution, and
@@ -23,10 +26,14 @@ A sealed, verifiable history corpus for EVM chains, plus the binary that serves 
 ## Shape
 
 - `crates/legacy-format` - geometry, canonical JSON (JCS), manifests, the pact chain, the registry.
+  Canonical row primitives and typed logs/withdrawals rows and content hashes also live here.
   No Parquet, no object storage, no JSON-RPC. Shadow and Solo agree on what a relic is by depending
   on this, not by both being careful.
+- `crates/legacy-parquet` - Parquet schemas, shared writer profile, logs/withdrawals codecs and
+  verification of byte buffers against manifest file claims. No sealing or chain verification.
 - `crates/shadow` - the six ingestion sources (§11). All skeleton so far.
-- `crates/solo` - serving (§13) and cleaning (§10). Only cleaning's manifest half exists.
+- `crates/solo` - serving (§13) and cleaning (§10). Manifest checks and optional local file checks
+  exist; serving, trie rebuilding and checkpoint anchoring do not.
 
 ## Working
 

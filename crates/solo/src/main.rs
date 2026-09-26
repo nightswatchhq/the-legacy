@@ -4,8 +4,8 @@
 //! in object storage, the tip forwarded to a small pruned upstream node, historical-state calls
 //! rejected outright rather than answered wrongly. None of the serving exists yet.
 //!
-//! What does exist is the half of cleaning that needs no block data: `solo clean` recomputes the
-//! pact chain over a set of manifests and says exactly which checks it did and did not perform. A
+//! `solo clean` recomputes the pact chain; `--files` adds local byte integrity and implemented
+//! table checks. Both say exactly which checks they did and did not perform. A
 //! report that implies more than it verified would be worse than no report.
 
 use std::path::PathBuf;
@@ -13,6 +13,8 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use legacy_format::{manifest::Manifest, pact, relic, SPEC_VERSION};
+
+mod clean_files;
 
 #[derive(Parser)]
 #[command(
@@ -46,6 +48,11 @@ enum Command {
         /// Emit the report as JSON rather than prose.
         #[arg(long)]
         json: bool,
+
+        /// Check local table files beside each manifest: bytes, footer counts, and implemented
+        /// table codecs. Does not verify trie roots, finality, signatures or checkpoint trust.
+        #[arg(long)]
+        files: bool,
     },
 
     /// Where a block lives: relic index, block range, object prefix.
@@ -93,7 +100,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             manifests,
             after,
             json,
-        } => clean(&manifests, after.as_deref(), json),
+            files,
+        } => clean(&manifests, after.as_deref(), json, files),
     }
 }
 
@@ -101,6 +109,7 @@ fn clean(
     paths: &[PathBuf],
     after: Option<&std::path::Path>,
     json: bool,
+    files: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if paths.is_empty() {
         return Err("no manifests given".into());
@@ -110,6 +119,25 @@ fn clean(
     let manifests: Vec<Manifest> = paths.iter().map(|p| load(p)).collect::<Result<_, _>>()?;
 
     let head = pact::verify_chain(previous.as_ref(), &manifests)?;
+    let file_reports = if files {
+        clean_files::check(paths, &manifests)?
+    } else {
+        Vec::new()
+    };
+    let byte_status = if files {
+        "pass"
+    } else {
+        "not checked (no relic data read)"
+    };
+    let content_status = if !files {
+        "not checked (no relic data read)"
+    } else if file_reports.iter().all(|r| r.checks.content_hash == "pass") {
+        "pass"
+    } else if file_reports.iter().all(|r| r.checks.content_hash != "pass") {
+        "not checked (no implemented table codec in these manifests)"
+    } else {
+        "partial (see per-file checks; some table codecs not implemented)"
+    };
     let traces = manifests
         .iter()
         .filter(|m| m.has_unverifiable_tier())
@@ -127,7 +155,16 @@ fn clean(
                 "manifest_structure": "pass",
                 "relic_linkage": "pass",
                 "pact_chain": "pass",
-                "file_hashes": "not checked (no relic data read)",
+                "file_hashes": byte_status,
+                "file_sizes": byte_status,
+                "parquet_counts": byte_status,
+                "content_hashes": content_status,
+                "header_linkage": "not checked (not implemented)",
+                "table_completeness": "not checked (not implemented)",
+                "producer_signatures": "not checked (not implemented)",
+                "era1_accumulator": "not checked (not implemented)",
+                "finality": "not checked (not implemented)",
+                "index_sidecars": "not checked (not implemented)",
                 "transactions_root": "not checked (not implemented)",
                 "receipts_root": "not checked (not implemented)",
                 "withdrawals_root": "not checked (not implemented)",
@@ -139,6 +176,8 @@ fn clean(
                 },
             },
             "pact_root": head.to_hex(),
+            "files": file_reports,
+            "scope": "requested manifests only; --after supplies predecessor context, not verified file coverage",
             "cleaned_by": concat!("solo/", env!("CARGO_PKG_VERSION")),
         });
         println!("{}", serde_json::to_string_pretty(&report)?);
@@ -152,9 +191,20 @@ fn clean(
         );
         println!("pact root   {head}");
         println!("checked     manifest structure, relic linkage, pact chain");
-        println!(
-            "NOT checked file hashes, transactions/receipts/withdrawals roots, checkpoint anchor"
-        );
+        if files {
+            println!("checked     local file sizes, BLAKE3 hashes, Parquet footer counts");
+            for file in &file_reports {
+                println!(
+                    "table       relic {} {}: schema/rows/content hash/block bounds: {}",
+                    file.relic_index, file.name, file.checks.content_hash
+                );
+            }
+        } else {
+            println!("NOT checked file sizes, file hashes, Parquet metadata or table contents");
+        }
+        println!("NOT checked table completeness, header linkage, transactions/receipts/withdrawals roots, checkpoint anchor, producer signatures");
+        println!("NOT checked era1 accumulator, finality, index sidecars");
+        println!("scope       requested manifests only; --after supplies predecessor context, not verified file coverage");
         if traces > 0 {
             println!(
                 "note        {traces} relic(s) carry a traces tier, which no header commits to \

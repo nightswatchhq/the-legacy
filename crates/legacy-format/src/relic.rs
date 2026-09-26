@@ -2,8 +2,9 @@
 //!
 //! RFC-0001 §5: a relic covers 8192 blocks, both pre- and post-merge, on every chain. 8192 is
 //! era1's epoch size (the SSZ accumulator is a `List[HeaderRecord, 8192]`, so an era1 file cannot
-//! hold more), which means one era1 file maps to exactly one pre-merge relic and its accumulator
-//! root carries into the manifest as a verifiable boundary artefact. It is also a power of two, so
+//! hold more). A full aligned era1 file maps to one pre-merge relic; partial files need more input
+//! before a relic can be sealed. A full epoch's accumulator root carries into its manifest as a
+//! verifiable boundary artefact. It is also a power of two, so
 //! block-to-relic is a shift rather than a division, and the pre- and post-merge tooling is the
 //! same tooling.
 //!

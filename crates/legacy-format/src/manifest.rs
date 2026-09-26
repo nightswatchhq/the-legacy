@@ -172,12 +172,11 @@ impl Manifest {
         if self.block_range.end < self.block_range.start {
             return bad(format!("block_range {} runs backwards", self.block_range));
         }
-        if self.block_range.len() != self.blocks_per_relic {
+        let range_len = (self.block_range.end - self.block_range.start).checked_add(1);
+        if range_len != Some(self.blocks_per_relic) {
             return bad(format!(
-                "block_range {} covers {} blocks, not {}",
-                self.block_range,
-                self.block_range.len(),
-                self.blocks_per_relic
+                "block_range {} does not cover exactly {} blocks",
+                self.block_range, self.blocks_per_relic
             ));
         }
         if !self.block_range.start.is_multiple_of(self.blocks_per_relic) {
@@ -188,6 +187,17 @@ impl Manifest {
         }
         if self.files.is_empty() {
             return bad("a relic with no files is not a relic".into());
+        }
+
+        for file in &self.files {
+            if file.name != file.table.file_name() {
+                return bad(format!(
+                    "file name {:?} must be {:?} for {:?}",
+                    file.name,
+                    file.table.file_name(),
+                    file.table
+                ));
+            }
         }
 
         let mut names: Vec<&str> = self.files.iter().map(|f| f.name.as_str()).collect();
@@ -314,6 +324,25 @@ mod tests {
                 }),
             ),
             ("no files", Box::new(|m: &mut Manifest| m.files.clear())),
+            (
+                "overflowing range",
+                Box::new(|m: &mut Manifest| {
+                    m.block_range.start = 0;
+                    m.block_range.end = u64::MAX;
+                }),
+            ),
+            (
+                "path traversal",
+                Box::new(|m: &mut Manifest| m.files[0].name = "../headers.parquet".into()),
+            ),
+            (
+                "absolute file name",
+                Box::new(|m: &mut Manifest| m.files[0].name = "/headers.parquet".into()),
+            ),
+            (
+                "table/name mismatch",
+                Box::new(|m: &mut Manifest| m.files[0].name = "transactions.parquet".into()),
+            ),
             (
                 "no headers",
                 Box::new(|m: &mut Manifest| m.files.retain(|f| f.table != Table::Headers)),

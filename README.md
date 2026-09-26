@@ -22,7 +22,8 @@ rebuildable, and **cleaning** rebuilds the transactions, receipts and withdrawal
 them against the block headers.
 
 **Read [RFC-0001](docs/rfcs/0001-the-legacy.md) first.** It is the specification; this repository is
-its implementation.
+its implementation. [RFC-0002](docs/rfcs/0002-the-backfill-layer.md) is the follow-up draft for
+node-free backfill, native readers and cost-bounded production; its interfaces remain proposed.
 
 ## Status
 
@@ -32,9 +33,11 @@ anything yet.** Precisely:
 | | state |
 |---|---|
 | RFC-0001 | written, Draft |
-| Relic geometry, canonical JSON (JCS), manifests, pact chain, registry | implemented, 42 tests |
-| `solo clean` (manifest structure, relic linkage, pact chain) | implemented |
-| Parquet tables, index sidecars | not started |
+| Relic geometry, canonical JSON (JCS), manifests, pact chain, registry | implemented |
+| Canonical row primitives and logs/withdrawals content hashing | implemented, golden byte vectors |
+| `solo clean` (manifest structure, relic linkage, pact chain) | implemented; `--files` adds local integrity checks |
+| Logs and withdrawals Parquet codecs | implemented, local synthetic round trips; no sealer |
+| Other Parquet tables, index sidecars | not started |
 | Trie rebuilding, checkpoint anchoring | not started |
 | `solo serve`, all six Shadow sources | not started |
 
@@ -42,7 +45,37 @@ anything yet.** Precisely:
 until each one is real. A verification report that implies more than it checked is worse than no
 report at all.
 
+The workspace has 80 tests. `solo clean --files` checks each listed file's size, BLAKE3 and
+Parquet footer counts. For logs and withdrawals it also checks schema, row order, canonical
+content hash, decoded count and block bounds. Other table contents are explicitly unchecked.
+None of these checks establishes complete chain history, trie roots, finality or checkpoint trust.
+
 ## Try it
+
+In-memory table round trips using synthetic data, with no RPC or object-storage calls:
+
+```sh
+cargo run -p legacy-parquet --example logs_round_trip
+cargo run -p legacy-parquet --example withdrawals_round_trip
+```
+
+The example prints separate file and canonical content hashes. File bytes depend on Parquet
+framing; content hashes compare rows for the same chain, schema, range and table. Pact roots
+compare exact manifest chains, not independently framed productions.
+
+For an existing local corpus, keep each table file beside its manifest and use:
+
+```sh
+cargo run -p solo -- clean --files --json path/to/000000/manifest.json
+```
+
+Pass manifests in ascending relic order. A run starting after genesis also needs
+`--after path/to/predecessor/manifest.json`; that predecessor supplies pact context and its table
+files are outside the reported check scope. Without `--files`, cleaning remains manifest-only.
+Missing, altered or malformed files fail the run with a nonzero exit and no success report.
+Only regular local files with their canonical table names are read; table symlinks are refused.
+The initial implementation holds one whole file and its decoded rows in memory, so it is not yet
+a bounded-memory corpus scanner.
 
 ```sh
 cargo run -p solo -- relic 20086783
@@ -69,12 +102,14 @@ blocks 20078592..=20090000 cover 2 relic(s), 2451..=2452
 
 ```
 crates/legacy-format   the executable half of the spec: geometry, JCS, manifests, pact, registry
+crates/legacy-parquet  logs/withdrawals codecs, writer profile and manifest file verification
 crates/shadow          the ingesters that transcode chain history into relics
 crates/solo            the serving binary, and the cleaning that verifies what you are served
 docs/rfcs/             RFC-0001 and successors
 ```
 
-`legacy-format` deliberately knows nothing about Parquet, object storage or JSON-RPC. Shadow and
+`legacy-format` includes canonical row encoding and deliberately knows nothing about Parquet,
+object storage or JSON-RPC. Shadow and
 Solo agree on what a relic *is* by depending on it, rather than by both being careful.
 
 ## Working on it

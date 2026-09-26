@@ -1,0 +1,111 @@
+//! Local files are resolved beside each manifest, never from an endpoint or a manifest-supplied URL.
+
+use std::path::PathBuf;
+
+use legacy_format::{Manifest, Table, SPEC_VERSION};
+use legacy_parquet::verify::{verify_file, DecodedChecks};
+use serde::Serialize;
+
+const PASS: &str = "pass";
+const NO_CODEC: &str = "not checked (table codec not implemented)";
+
+#[derive(Debug, Serialize)]
+pub struct FileReport {
+    pub relic_index: u64,
+    pub name: String,
+    pub table: Table,
+    pub checks: FileChecks,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FileChecks {
+    pub byte_size: &'static str,
+    pub blake3: &'static str,
+    pub parquet_counts: &'static str,
+    pub schema: &'static str,
+    pub row_order: &'static str,
+    pub content_hash: &'static str,
+    pub decoded_row_count: &'static str,
+    pub block_range: &'static str,
+}
+
+/// Run after pact/manifest validation. No success report is emitted until all files pass.
+pub fn check(
+    paths: &[PathBuf],
+    manifests: &[Manifest],
+) -> Result<Vec<FileReport>, Box<dyn std::error::Error>> {
+    let mut reports = Vec::new();
+    for (path, manifest) in paths.iter().zip(manifests) {
+        if manifest.spec_version != SPEC_VERSION {
+            return Err(format!(
+                "{}: unsupported spec_version {} for file checks",
+                path.display(),
+                manifest.spec_version
+            )
+            .into());
+        }
+        let directory = path.parent().ok_or("manifest has no parent directory")?;
+        for entry in &manifest.files {
+            // Keep the path invariant here too: this module must remain safe if a future caller
+            // forgets the manifest-validation step.
+            if entry.name != entry.table.file_name() {
+                return Err(format!(
+                    "{}: invalid table file name {:?}",
+                    path.display(),
+                    entry.name
+                )
+                .into());
+            }
+            let file_path = directory.join(&entry.name);
+            let metadata = std::fs::symlink_metadata(&file_path)
+                .map_err(|e| format!("reading {}: {e}", file_path.display()))?;
+            if !metadata.file_type().is_file() {
+                return Err(format!(
+                    "{}: expected a regular file, not a symlink or special file",
+                    file_path.display()
+                )
+                .into());
+            }
+            if metadata.len() != entry.byte_size {
+                return Err(format!(
+                    "{}: byte_size is {}, manifest claims {}",
+                    file_path.display(),
+                    metadata.len(),
+                    entry.byte_size
+                )
+                .into());
+            }
+            // Verify one immutable byte buffer throughout; reopening for decoding could check
+            // the hash of one file and the rows of a replacement.
+            let bytes = std::fs::read(&file_path)
+                .map_err(|e| format!("reading {}: {e}", file_path.display()))?;
+            let decoded = verify_file(
+                bytes.into(),
+                entry,
+                manifest.block_range,
+                manifest.spec_version,
+            )
+            .map_err(|e| format!("{}: {e}", file_path.display()))?;
+            let table_status = match decoded {
+                DecodedChecks::Passed => PASS,
+                DecodedChecks::NotImplemented => NO_CODEC,
+            };
+            reports.push(FileReport {
+                relic_index: manifest.relic_index(),
+                name: entry.name.clone(),
+                table: entry.table,
+                checks: FileChecks {
+                    byte_size: PASS,
+                    blake3: PASS,
+                    parquet_counts: PASS,
+                    schema: table_status,
+                    row_order: table_status,
+                    content_hash: table_status,
+                    decoded_row_count: table_status,
+                    block_range: table_status,
+                },
+            });
+        }
+    }
+    Ok(reports)
+}

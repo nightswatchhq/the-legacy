@@ -2,19 +2,23 @@
 //!
 //! This crate is the executable half of RFC-0001 (`docs/rfcs/0001-the-legacy.md`): relic geometry,
 //! the canonical-JSON manifest, and the pact hash chain. It deliberately knows nothing about
-//! Parquet, object storage or JSON-RPC. Those live in `shadow` (produce) and `solo` (serve), and
+//! Parquet, object storage or JSON-RPC. Table codecs live in `legacy-parquet`; ingestion and
+//! serving belong to `shadow` and `solo`, and
 //! both of them agree on what a relic *is* by depending on this crate rather than by convention.
 //!
 //! The spec constants that matter are in [`relic`]: a relic is 8192 blocks, so the block-to-relic
 //! mapping is a shift rather than a division.
 
+pub mod canonical;
 pub mod error;
 pub mod hash;
 pub mod jcs;
+pub mod logs;
 pub mod manifest;
 pub mod pact;
 pub mod registry;
 pub mod relic;
+pub mod withdrawals;
 
 pub use error::Error;
 pub use hash::Hash32;
