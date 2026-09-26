@@ -40,6 +40,9 @@ implementation-linked amendments, not already supported interfaces.
 - `crates/legacy-parquet` - Parquet schemas, shared writer profile and codecs for the implemented
   tables, plus verification against manifest file claims. No sealing, consensus validation or
   checkpoint verification.
+- `crates/legacy-reader` - native local sealed-history reads. It currently re-verifies
+  manifest-bound files before yielding log rows; object storage and the broader reader API remain
+  to be built.
 - `crates/shadow` - the six ingestion sources (§11). All skeleton so far.
 - `crates/solo` - serving (§13) and cleaning (§10). Manifest checks and optional local file checks
   exist; serving and checkpoint anchoring do not.

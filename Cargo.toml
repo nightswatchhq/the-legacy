@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/legacy-format", "crates/legacy-parquet", "crates/shadow", "crates/solo"]
+members = ["crates/legacy-format", "crates/legacy-parquet", "crates/legacy-reader", "crates/shadow", "crates/solo"]
 resolver = "2"
 
 [workspace.package]
@@ -15,6 +15,7 @@ authors = ["Petko Pavlovski"]
 [workspace.dependencies]
 legacy-format = { path = "crates/legacy-format", version = "0.0.1" }
 legacy-parquet = { path = "crates/legacy-parquet", version = "0.0.1" }
+legacy-reader = { path = "crates/legacy-reader", version = "0.0.1" }
 blake3 = "1"
 clap = { version = "4", features = ["derive"] }
 hex = "0.4"

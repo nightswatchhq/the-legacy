@@ -1,0 +1,15 @@
+[package]
+name = "legacy-reader"
+description = "The Legacy: verified native reads from sealed local relics."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+legacy-format.workspace = true
+legacy-parquet.workspace = true
+thiserror.workspace = true
+serde_json.workspace = true

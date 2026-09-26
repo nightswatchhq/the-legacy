@@ -1549,6 +1549,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "legacy-reader"
+version = "0.0.1"
+dependencies = [
+ "legacy-format",
+ "legacy-parquet",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.189"
 source = "registry+https://github.com/rust-lang/crates.io-index"
