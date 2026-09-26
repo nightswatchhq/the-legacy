@@ -51,6 +51,39 @@ pub fn receipt_blooms(logs: &[LogRow], receipts: &[ReceiptRow]) -> Result<(), Co
     Ok(())
 }
 
+/// OR receipt blooms per block and compare every supplied header, including empty blocks.
+/// Receipt blooms need not have been checked against logs. This reports aggregation only.
+pub fn header_blooms(
+    headers: &[crate::headers::HeaderRow],
+    receipts: &[ReceiptRow],
+) -> Result<(), ConsistencyError> {
+    crate::headers::validate_rows(headers)?;
+    crate::receipts::validate_rows(receipts)?;
+    let mut cursor = 0;
+    for header in headers {
+        let mut expected = [0; 256];
+        while let Some(receipt) = receipts.get(cursor) {
+            if receipt.block_number < header.block_number {
+                return Err(ConsistencyError::MissingHeader(receipt.block_number));
+            }
+            if receipt.block_number != header.block_number {
+                break;
+            }
+            for (target, byte) in expected.iter_mut().zip(receipt.logs_bloom) {
+                *target |= byte;
+            }
+            cursor += 1;
+        }
+        if expected != header.logs_bloom {
+            return Err(ConsistencyError::HeaderBloom(header.block_number));
+        }
+    }
+    if let Some(receipt) = receipts.get(cursor) {
+        return Err(ConsistencyError::MissingHeader(receipt.block_number));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -46,6 +46,7 @@ pub struct RelicReport {
     pub log_transaction_links: &'static str,
     pub log_receipt_links: &'static str,
     pub receipt_blooms: &'static str,
+    pub header_blooms: &'static str,
 }
 
 pub fn summarize(
@@ -80,6 +81,7 @@ pub fn check(
             .into());
         }
         let directory = path.parent().ok_or("manifest has no parent directory")?;
+        let mut headers = None;
         let mut transactions = None;
         let mut receipts = None;
         let mut logs = None;
@@ -120,6 +122,7 @@ pub fn check(
             let (decoded, rows) = verify_file_with_rows(bytes.into(), entry, manifest)
                 .map_err(|e| format!("{}: {e}", file_path.display()))?;
             match rows {
+                VerifiedRows::Headers(rows) => headers = Some(rows),
                 VerifiedRows::Transactions(rows) => transactions = Some(rows),
                 VerifiedRows::Receipts(rows) => receipts = Some(rows),
                 VerifiedRows::Logs(rows) => logs = Some(rows),
@@ -174,6 +177,7 @@ pub fn check(
             log_transaction_links: "not checked (logs or transactions absent)",
             log_receipt_links: "not checked (logs or receipts absent)",
             receipt_blooms: "not checked (logs or receipts absent)",
+            header_blooms: "not checked (headers or receipts absent)",
         };
         let context = |error| format!("relic {}: {error}", manifest.relic_index());
         if let (Some(tx), Some(receipts)) = (&transactions, &receipts) {
@@ -189,6 +193,10 @@ pub fn check(
             relational.log_receipt_links = PASS;
             legacy_format::bloom::receipt_blooms(logs, receipts).map_err(context)?;
             relational.receipt_blooms = PASS;
+        }
+        if let (Some(headers), Some(receipts)) = (&headers, &receipts) {
+            legacy_format::bloom::header_blooms(headers, receipts).map_err(context)?;
+            relational.header_blooms = PASS;
         }
         reports.relics.push(relational);
     }

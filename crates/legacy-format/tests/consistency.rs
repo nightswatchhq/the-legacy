@@ -163,3 +163,86 @@ fn bloom_checker_does_not_silently_drop_orphan_or_disordered_logs() {
     assert!(receipt_blooms(std::slice::from_ref(&row), &[receipt]).is_err());
     assert!(receipt_blooms(&[row.clone(), row], &[receipt_row()]).is_err());
 }
+
+fn header(block_number: u64) -> legacy_format::headers::HeaderRow {
+    legacy_format::headers::HeaderRow {
+        block_number,
+        block_hash: [0; 32],
+        parent_hash: [0; 32],
+        ommers_hash: [0; 32],
+        beneficiary: [0; 20],
+        state_root: [0; 32],
+        transactions_root: [0; 32],
+        receipts_root: [0; 32],
+        logs_bloom: [0; 256],
+        difficulty: vec![],
+        gas_limit: 0,
+        gas_used: 0,
+        timestamp: 0,
+        extra_data: vec![],
+        mix_hash: [0; 32],
+        nonce: [0; 8],
+        base_fee_per_gas: None,
+        withdrawals_root: None,
+        blob_gas_used: None,
+        excess_blob_gas: None,
+        parent_beacon_block_root: None,
+        requests_hash: None,
+        total_difficulty: None,
+    }
+}
+
+#[test]
+fn header_blooms_or_receipts_and_reset_at_block_boundaries() {
+    use legacy_format::bloom::header_blooms;
+    let mut first = receipt_row();
+    first.logs_bloom = [0; 256];
+    first.logs_bloom[0] = 1;
+    let mut second = first.clone();
+    second.transaction_index += 1;
+    second.logs_bloom[0] = 3;
+    let mut third = first.clone();
+    third.block_number += 2;
+    third.logs_bloom[255] = 128;
+    let mut headers = [header(8192), header(8193), header(8194)];
+    headers[0].logs_bloom[0] = 3;
+    headers[2].logs_bloom[0] = 1;
+    headers[2].logs_bloom[255] = 128;
+    let receipts = [first, second, third];
+    header_blooms(&headers, &receipts).unwrap();
+    headers[1].logs_bloom[0] = 1;
+    assert_eq!(
+        header_blooms(&headers, &receipts),
+        Err(ConsistencyError::HeaderBloom(8193))
+    );
+    header_blooms(&[header(0)], &[]).unwrap();
+    header_blooms(&[], &[]).unwrap();
+}
+
+#[test]
+fn header_blooms_reject_receipts_outside_or_between_supplied_headers() {
+    use legacy_format::bloom::header_blooms;
+    let mut receipt = receipt_row();
+    receipt.logs_bloom = [0; 256];
+    for headers in [
+        vec![],
+        vec![header(8191)],
+        vec![header(8193)],
+        vec![header(8191), header(8193)],
+    ] {
+        assert_eq!(
+            header_blooms(&headers, std::slice::from_ref(&receipt)),
+            Err(ConsistencyError::MissingHeader(8192))
+        );
+    }
+}
+
+#[test]
+fn header_bloom_api_checks_order_and_shape_before_merging() {
+    use legacy_format::bloom::header_blooms;
+    assert!(header_blooms(&[header(1), header(0)], &[]).is_err());
+    assert!(header_blooms(&[header(0), header(0)], &[]).is_err());
+    let mut receipt = receipt_row();
+    receipt.status = Some(2);
+    assert!(header_blooms(&[header(8192)], &[receipt]).is_err());
+}

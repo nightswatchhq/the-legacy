@@ -21,6 +21,7 @@ pub enum DecodedChecks {
 /// Rows retained from the very buffer whose hashes and contents were verified.
 #[derive(Debug)]
 pub enum VerifiedRows {
+    Headers(Vec<legacy_format::headers::HeaderRow>),
     Transactions(Vec<legacy_format::transactions::TransactionRow>),
     Receipts(Vec<legacy_format::receipts::ReceiptRow>),
     Logs(Vec<legacy_format::logs::LogRow>),
@@ -84,7 +85,7 @@ pub fn verify_file_with_rows(
                 legacy_format::headers::content_hash(&rows)?,
                 rows.len(),
                 true,
-                VerifiedRows::Other,
+                VerifiedRows::Headers(rows),
             )
         }
         Table::Transactions => {

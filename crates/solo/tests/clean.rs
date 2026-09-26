@@ -751,6 +751,7 @@ fn all_core_tables_pass_link_checks_without_claiming_trie_verification() {
         m.files.push(tx_entry);
         m.files.push(entry);
     });
+    align_header_blooms(path);
     let out = solo(&[path], &["--files", "--json"]);
     assert!(
         out.status.success(),
@@ -770,6 +771,7 @@ fn all_core_tables_pass_link_checks_without_claiming_trie_verification() {
         "log_transaction_links",
         "log_receipt_links",
         "receipt_blooms",
+        "header_blooms",
     ] {
         assert_eq!(report["checks"][check], "pass");
         assert_eq!(report["relic_checks"][0][check], "pass");
@@ -812,6 +814,7 @@ fn attach_linked_tables(path: &Path) {
         std::fs::write(path.parent().unwrap().join(&entry.name), bytes).unwrap();
         reseal_first(path, |m| m.files.push(entry));
     }
+    align_header_blooms(path);
 }
 
 #[test]
@@ -903,6 +906,7 @@ fn link_reports_distinguish_missing_tables_empty_tables_and_partial_runs() {
         "log_transaction_links",
         "log_receipt_links",
         "receipt_blooms",
+        "header_blooms",
     ] {
         assert!(report["checks"][check]
             .as_str()
@@ -935,6 +939,7 @@ fn link_reports_distinguish_missing_tables_empty_tables_and_partial_runs() {
             *target = entry
         });
     }
+    align_header_blooms(&paths[0]);
     let out = solo(&[&paths[0]], &["--files", "--json"]);
     assert!(
         out.status.success(),
@@ -947,6 +952,7 @@ fn link_reports_distinguish_missing_tables_empty_tables_and_partial_runs() {
         "log_transaction_links",
         "log_receipt_links",
         "receipt_blooms",
+        "header_blooms",
     ] {
         assert_eq!(report["checks"][check], "pass");
     }
@@ -982,6 +988,7 @@ fn resealed_wrong_receipt_bloom_fails_and_missing_logs_remain_unchecked() {
         "receipt bloom differs from supplied logs at block 1, transaction 0",
     );
     reseal_first(path, |m| m.files.retain(|f| f.table != Table::Logs));
+    align_header_blooms(path);
     let out = solo(&[path], &["--files", "--json"]);
     assert!(
         out.status.success(),
@@ -997,5 +1004,64 @@ fn resealed_wrong_receipt_bloom_fails_and_missing_logs_remain_unchecked() {
         .as_str()
         .unwrap()
         .contains("logs or receipts absent"));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+// Fixtures use synthetic stored hashes; changing bloom columns does not claim chain authenticity.
+fn align_header_blooms(path: &Path) {
+    let dir = path.parent().unwrap();
+    let mut headers = legacy_parquet::headers::read_headers(
+        std::fs::read(dir.join("headers.parquet")).unwrap().into(),
+    )
+    .unwrap();
+    let receipts = legacy_parquet::receipts::read_receipts(
+        std::fs::read(dir.join("receipts.parquet")).unwrap().into(),
+    )
+    .unwrap();
+    for header in &mut headers {
+        header.logs_bloom = [0; 256];
+    }
+    for receipt in receipts {
+        let index = headers
+            .binary_search_by_key(&receipt.block_number, |h| h.block_number)
+            .unwrap();
+        for (target, byte) in headers[index].logs_bloom.iter_mut().zip(receipt.logs_bloom) {
+            *target |= byte;
+        }
+    }
+    let (bytes, entry) = legacy_parquet::headers::write_headers(&headers).unwrap();
+    std::fs::write(dir.join(&entry.name), bytes).unwrap();
+    reseal_first(path, |m| m.files[0] = entry);
+}
+
+#[test]
+fn header_bloom_mismatch_survives_file_hash_and_pact_resealing() {
+    let dir = scratch("header-bloom");
+    let paths = write_local_chain(&dir, 1);
+    let path = &paths[0];
+    attach_linked_tables(path);
+    let file = path.parent().unwrap().join("headers.parquet");
+    let mut headers =
+        legacy_parquet::headers::read_headers(std::fs::read(&file).unwrap().into()).unwrap();
+    headers[2].logs_bloom[0] = 1; // A block with no supplied receipts must have zero bloom.
+    let (bytes, entry) = legacy_parquet::headers::write_headers(&headers).unwrap();
+    std::fs::write(&file, bytes).unwrap();
+    reseal_first(path, |m| m.files[0] = entry);
+    assert_failed(
+        &solo(&[path], &["--files", "--json"]),
+        "header bloom differs from supplied receipts at block 2",
+    );
+    reseal_first(path, |m| m.files.retain(|f| f.table != Table::Receipts));
+    let out = solo(&[path], &["--files", "--json"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(report["checks"]["header_blooms"]
+        .as_str()
+        .unwrap()
+        .starts_with("not checked"));
     std::fs::remove_dir_all(dir).unwrap();
 }

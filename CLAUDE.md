@@ -14,7 +14,7 @@ implementation-linked amendments, not already supported interfaces.
    linkage and the pact chain by default. `--files` adds local byte integrity, Parquet counts and
    decoded checks for all five core tables, including header coverage and stored links. It
    reconstructs Ethereum header hashes through Prague for chain ID 1 only and checks transaction,
-   receipt and log references plus receipt blooms where both tables exist. Header blooms, derived
+   receipt and log references plus receipt/header blooms where the required tables exist. Derived
    fields, other chain profiles, completeness, consensus rules and checkpoint trust remain
    unchecked; consistency is not chain trust.
    This is the single most important rule in the repo: the whole project's

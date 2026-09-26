@@ -6,6 +6,12 @@ use thiserror::Error;
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ConsistencyError {
     #[error(transparent)]
+    Headers(#[from] crate::headers::HeaderError),
+    #[error("header bloom differs from supplied receipts at block {0}")]
+    HeaderBloom(u64),
+    #[error("receipt references missing header at block {0}")]
+    MissingHeader(u64),
+    #[error(transparent)]
     Transactions(#[from] crate::transactions::TransactionError),
     #[error(transparent)]
     Receipts(#[from] crate::receipts::ReceiptError),
