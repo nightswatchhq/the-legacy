@@ -132,6 +132,7 @@ fn clean(
     let receipt_blooms = clean_files::summarize(&local_report.relics, |r| r.receipt_blooms);
     let header_blooms = clean_files::summarize(&local_report.relics, |r| r.header_blooms);
     let receipt_gas = clean_files::summarize(&local_report.relics, |r| r.receipt_gas);
+    let transactions_root = clean_files::summarize(&local_report.relics, |r| r.transactions_root);
     let receipts_root = clean_files::summarize(&local_report.relics, |r| r.receipts_root);
     let byte_status = if files {
         "pass"
@@ -190,9 +191,9 @@ fn clean(
                 "era1_accumulator": "not checked (not implemented)",
                 "finality": "not checked (not implemented)",
                 "index_sidecars": "not checked (not implemented)",
-                "transaction_envelopes": "not checked (RLP semantics, hash and raw/structured agreement not implemented)",
+                "transaction_envelopes": "not checked (field RLP semantics and raw/structured agreement not implemented; see transactions_root for raw envelope profile/hash)",
                 "transaction_signatures": "not checked (signature validity and sender recovery not implemented)",
-                "transactions_root": "not checked (not implemented)",
+                "transactions_root": transactions_root,
                 "transaction_receipt_links": tx_receipt_links,
                 "log_transaction_links": log_tx_links,
                 "log_receipt_links": log_receipt_links,
@@ -241,8 +242,15 @@ fn clean(
             println!("NOT checked file sizes, file hashes, Parquet metadata or table contents");
         }
         println!("header hashes/linkage: {header_hash_status} (Ethereum layout through Prague; requested files only)");
-        println!("NOT checked consensus rules/fork schedule, other table completeness, transactions/withdrawals roots, checkpoint anchor, producer signatures");
-        println!("NOT checked transaction envelopes, RLP semantics, transaction hashes, signatures or sender recovery");
+        println!("NOT checked consensus rules/fork schedule, other table completeness, withdrawals roots, checkpoint anchor, producer signatures");
+        println!("transaction trie roots: {transactions_root}");
+        for relic in &local_report.relics {
+            println!(
+                "relic {} transaction trie roots: {}",
+                relic.relic_index, relic.transactions_root
+            );
+        }
+        println!("NOT checked transaction field RLP semantics, raw/structured agreement, signatures or sender recovery");
         println!("transaction/receipt links: {tx_receipt_links}");
         println!("log/transaction links: {log_tx_links}");
         println!("log/receipt links: {log_receipt_links}");

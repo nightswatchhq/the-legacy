@@ -238,12 +238,13 @@ each header's RLP/Keccak hash and authenticating the chain to its trust anchor.
 | `raw_envelope` | BYTE_ARRAY | binary | yes | PLAIN | optional; see below |
 
 Sort order: (`block_number`, `transaction_index`). The typed-envelope bytes are reconstructable from
-these columns for trie verification. **Decision:** `raw_envelope` is a nullable optional column,
-defaulting **on** for the archive-RPC and era1 Shadows and **off** for the Reth/Erigon Shadows to
-save space; cleaning handles both. era1 supplies encoded transaction bodies; a JSON-RPC block
-response may instead require reconstructing the signed envelope from fields. Stored envelopes
-must agree with the structured columns. Cleaning still rebuilds the ordered trie and authenticates
-its header root; having raw bytes does not reduce it to a file or transaction hash check.
+these columns for trie verification. **Decision:** `raw_envelope` remains a nullable optional
+column, defaulting **on** for the archive-RPC and era1 Shadows and **off** for the Reth/Erigon
+Shadows to save space. era1 supplies encoded transaction bodies; a JSON-RPC block response may
+instead require reconstructing the signed envelope from fields. Stored envelopes must agree with
+the structured columns. The current chain ID 1 root checker requires raw envelopes, checks their
+Keccak transaction hashes and rebuilds the ordered trie; a future structured-envelope encoder can
+extend that check to rows without raw bytes. Raw/structured agreement is not yet checked.
 
 **Signature normalization.** For unprotected legacy transactions (`type = 0`, `chain_id = null`),
 `v_or_y_parity` stores 27 or 28. For EIP-155 legacy transactions it stores parity 0 or 1;
@@ -596,6 +597,15 @@ begin with a value in `[0, 0x7f]`, legacy with `>= 0xc0`). The trie key is `RLP(
 `trie.root()` against `headers.transactions_root`. Solo/Shadow use `alloy`/`reth-primitives`
 encoders (`ordered_trie_root_with_encoder` computes exactly this).
 
+For chain ID 1, the current cleaner does this only when every transaction has `raw_envelope`.
+It accepts legacy envelopes beginning with an RLP list and types 1 through 4 with the matching
+raw prefix and an RLP-list payload. It checks `keccak256(raw_envelope) == transaction_hash`,
+requires indices contiguous from zero per block, and compares the resulting ordered trie root to
+`headers.transactions_root`. Empty blocks use the Ethereum empty trie root. It does not decode
+the individual transaction fields, establish raw/structured agreement, recover senders, validate
+signatures or apply a fork schedule. Missing headers or transactions report **not checked**;
+other chains report an unsupported transaction profile.
+
 ### 10.2 Receipts trie
 
 For Ethereum, [EIP-2718](https://eips.ethereum.org/EIPS/eip-2718) defines trie keys as
@@ -736,9 +746,10 @@ Transaction envelope semantics (including raw/structured agreement and transacti
 signature validity/sender recovery are separately reported as **not checked**. Receipt fees
 and other derived fields still report **not checked** under `receipt_consistency`.
 Execution gas accounting has its own `receipt_gas` result.
-Other table completeness, consensus rules, transaction/receipt/withdrawal roots, era1
-accumulators, finality, index correctness, producer signatures and checkpoint anchoring remain
-unimplemented. The example in §10.6 is the intended full report, not current executable output.
+Other table completeness, consensus rules, withdrawal roots, era1 accumulators, finality, index
+correctness, producer signatures and checkpoint anchoring remain unimplemented. Transaction-root
+checking currently requires raw envelopes, and receipt-root checking has the chain ID 1 profile
+described above. The example in §10.6 is the intended full report, not current executable output.
 After the file checks, the cleaner compares available tables within each requested relic:
 
 - `transaction_receipt_links`: transactions and receipts must have equal row counts and match

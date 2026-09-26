@@ -15,8 +15,8 @@ implementation-linked amendments, not already supported interfaces.
    decoded checks for all five core tables, including header coverage and stored links. It
    reconstructs Ethereum header hashes through Prague for chain ID 1 only and checks transaction,
    receipt and log references plus receipt/header blooms where the required tables exist. Chain
-   ID 1 also checks receipt/header execution gas accounting and receipt trie roots. Transaction
-   and withdrawal roots, fees, other derived fields, other chain profiles, completeness,
+   ID 1 also checks receipt/header execution gas accounting plus transaction and receipt trie
+   roots. Withdrawal roots, fees, other derived fields, other chain profiles, completeness,
    execution/fork validity and checkpoint trust remain
    unchecked; consistency is not chain trust.
    This is the single most important rule in the repo: the whole project's
@@ -33,8 +33,8 @@ implementation-linked amendments, not already supported interfaces.
 
 - `crates/legacy-format` - geometry, canonical JSON (JCS), manifests, the pact chain, the registry.
   Canonical row primitives, headers/transactions/receipts/logs/withdrawals rows and their content hashes
-  live here. Ethereum receipt trie-leaf encoding and root reconstruction exist for legacy and
-  types 1..=4; transaction and withdrawal roots do not.
+  live here. Ethereum transaction and receipt trie root reconstruction exists for raw legacy and
+  types 1..=4 envelopes; withdrawal roots do not.
   No Parquet, no object storage, no JSON-RPC. Shadow and Solo agree on what a relic is by depending
   on this, not by both being careful.
 - `crates/legacy-parquet` - Parquet schemas, shared writer profile and codecs for the implemented
@@ -42,7 +42,7 @@ implementation-linked amendments, not already supported interfaces.
   checkpoint verification.
 - `crates/shadow` - the six ingestion sources (§11). All skeleton so far.
 - `crates/solo` - serving (§13) and cleaning (§10). Manifest checks and optional local file checks
-  exist; serving, transaction/withdrawal trie rebuilding and checkpoint anchoring do not.
+  exist; serving, withdrawal trie rebuilding and checkpoint anchoring do not.
 
 ## Working
 

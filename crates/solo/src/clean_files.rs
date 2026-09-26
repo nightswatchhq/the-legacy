@@ -48,6 +48,7 @@ pub struct RelicReport {
     pub receipt_blooms: &'static str,
     pub header_blooms: &'static str,
     pub receipt_gas: &'static str,
+    pub transactions_root: &'static str,
     pub receipts_root: &'static str,
 }
 
@@ -175,6 +176,11 @@ pub fn check(
         }
         let mut relational = RelicReport {
             relic_index: manifest.relic_index(),
+            transactions_root: if manifest.chain_id == 1 {
+                "not checked (headers or transactions absent)"
+            } else {
+                "not checked (unsupported chain transaction profile)"
+            },
             receipts_root: if manifest.chain_id == 1 {
                 "not checked (headers, receipts or logs absent)"
             } else {
@@ -216,6 +222,14 @@ pub fn check(
             }
         }
         if manifest.chain_id == 1 {
+            if let (Some(headers), Some(transactions)) = (&headers, &transactions) {
+                legacy_format::ethereum_transactions::verify_transaction_roots(
+                    headers,
+                    transactions,
+                )
+                .map_err(|error| format!("relic {}: {error}", manifest.relic_index()))?;
+                relational.transactions_root = PASS;
+            }
             if let (Some(headers), Some(receipts), Some(logs)) = (&headers, &receipts, &logs) {
                 legacy_format::ethereum_receipts::verify_receipt_roots(headers, receipts, logs)
                     .map_err(|error| format!("relic {}: {error}", manifest.relic_index()))?;

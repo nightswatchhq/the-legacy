@@ -18,8 +18,8 @@ into immutable 8192-block segments called **relics**: plain Apache Parquet plus 
 manifest. Manifests chain into a **pact**, one root hash per chain per height, so two mirrors
 compare their entire corpus in a single 32-byte exchange and localise any disagreement in O(log n)
 requests. Nothing in it privileges the producer: every file is content-addressed and every
-sidecar is rebuildable. The current cleaner rebuilds receipt tries for its chain ID 1 profile;
-transaction and withdrawal roots remain future work.
+sidecar is rebuildable. The current cleaner rebuilds transaction and receipt tries for its chain
+ID 1 profile; withdrawal roots remain future work.
 
 **Read [RFC-0001](docs/rfcs/0001-the-legacy.md) first.** It is the specification; this repository is
 its implementation. [RFC-0002](docs/rfcs/0002-the-backfill-layer.md) is the follow-up draft for
@@ -39,8 +39,9 @@ anything yet.** Precisely:
 | Headers, transactions, receipts, logs and withdrawals Parquet codecs | implemented, local synthetic round trips; no sealer |
 | Traces Parquet codec, index sidecars | not started |
 | Ethereum receipt trie-leaf encoding | implemented for legacy and types 1..=4; independent synthetic vectors |
+| Ethereum transaction trie roots | chain ID 1 local cleaner check from stored raw envelopes |
 | Ethereum receipts trie roots | chain ID 1 local cleaner check; header trust remains separate |
-| Transactions/withdrawals trie roots, checkpoint anchoring | not started |
+| Withdrawals trie roots, checkpoint anchoring | not started |
 | `solo serve`, all six Shadow sources | not started |
 
 `solo clean` says out loud which checks it performed and which it did not, and will keep doing so
@@ -53,9 +54,9 @@ content hash, decoded count and block bounds. Headers must cover every block in 
 relic, have consistent stored parent links, and match the manifest boundaries. For chain ID 1,
 it also reconstructs RLP/Keccak header hashes using Ethereum layouts through Prague; other chain
 profiles remain unchecked. Hash-consistent synthetic chains can still pass. Consensus rules
-(including fork activation), other table contents, trie roots, finality and checkpoint trust
-remain explicitly unchecked. Transaction envelope agreement, transaction hashes, signatures and
-sender recovery also remain unchecked, as do fees and other derived fields.
+(including fork activation), other table contents, withdrawal roots, finality and checkpoint
+trust remain explicitly unchecked. Transaction field agreement, signatures and sender recovery
+also remain unchecked, as do fees and other derived fields.
 When the relevant tables are present, the cleaner matches transaction/receipt keys, hashes and
 types, each log's transaction and receipt references, and receipt blooms rebuilt from log
 addresses/topics. It also compares header blooms with the OR of supplied receipt blooms per
@@ -65,9 +66,11 @@ tables from empty ones. Agreement among supplied rows does not establish complet
 correctness; the checker retains these decoded tables for one relic in memory. For chain ID 1,
 it also checks contiguous receipt indices, cumulative execution gas, present `gas_used` values,
 header gas totals and the block gas limit. Other chains report this accounting profile as unchecked.
-For chain ID 1 with headers, receipts and logs present, it also rebuilds the receipt trie and
-compares its root with the header. This proves agreement among those supplied bytes, not
-canonical-chain membership or receipt completeness.
+For chain ID 1 with headers and transactions present, it rebuilds the transaction trie from raw
+legacy or types 1 through 4 envelopes, checks each envelope's Keccak hash, and compares the root
+with the header. With headers, receipts and logs present, it also rebuilds the receipt trie. These
+checks prove agreement among supplied bytes, not canonical-chain membership, field agreement or
+table completeness.
 
 ## Try it
 

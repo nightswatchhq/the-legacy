@@ -804,9 +804,13 @@ fn attach_linked_tables(path: &Path) {
     let mut tx = transaction_row();
     tx.block_number = 1;
     tx.transaction_index = 0;
+    tx.transaction_hash =
+        legacy_format::ethereum_transactions::transaction_hash(tx.raw_envelope.as_deref().unwrap());
+    let transaction_hash = tx.transaction_hash;
     let mut receipt = receipt_row();
     receipt.block_number = 1;
     receipt.transaction_index = 0;
+    receipt.transaction_hash = tx.transaction_hash;
     for (bytes, entry) in [
         legacy_parquet::transactions::write_transactions(&[tx]).unwrap(),
         legacy_parquet::receipts::write_receipts(&[receipt]).unwrap(),
@@ -814,6 +818,16 @@ fn attach_linked_tables(path: &Path) {
         std::fs::write(path.parent().unwrap().join(&entry.name), bytes).unwrap();
         reseal_first(path, |m| m.files.push(entry));
     }
+    let log_file = path.parent().unwrap().join("logs.parquet");
+    let mut logs =
+        legacy_parquet::logs::read_logs(std::fs::read(&log_file).unwrap().into()).unwrap();
+    logs[0].transaction_hash = transaction_hash;
+    let (bytes, entry) = legacy_parquet::logs::write_logs(&logs).unwrap();
+    std::fs::write(&log_file, bytes).unwrap();
+    reseal_first(path, |m| {
+        let target = m.files.iter_mut().find(|f| f.table == Table::Logs).unwrap();
+        *target = entry;
+    });
     align_header_blooms(path);
 }
 
@@ -1095,11 +1109,22 @@ fn ethereum_gas_accounting_detects_resealed_lies_and_skips_unknown_chains() {
     )
     .unwrap();
     headers[1].gas_used = 21000;
+    let transactions = legacy_parquet::transactions::read_transactions(
+        std::fs::read(directory.join("transactions.parquet"))
+            .unwrap()
+            .into(),
+    )
+    .unwrap();
     let log_file = directory.join("logs.parquet");
     let log_bytes = std::fs::read(&log_file).unwrap();
     let logs = legacy_parquet::logs::read_logs(log_bytes.clone().into()).unwrap();
     let mut parent = [0; 32];
     for h in &mut headers {
+        h.transactions_root = if h.block_number == 1 {
+            legacy_format::ethereum_transactions::transaction_root(1, &transactions).unwrap()
+        } else {
+            legacy_format::ethereum_transactions::transaction_root(h.block_number, &[]).unwrap()
+        };
         h.receipts_root = if h.block_number == 1 {
             legacy_format::ethereum_receipts::receipt_root(1, &receipts, &logs).unwrap()
         } else {
@@ -1128,10 +1153,39 @@ fn ethereum_gas_accounting_detects_resealed_lies_and_skips_unknown_chains() {
     assert_eq!(report["checks"]["receipt_gas"], "pass");
     assert_eq!(report["relic_checks"][0]["receipt_gas"], "pass");
     assert_eq!(report["checks"]["receipts_root"], "pass");
+    assert_eq!(report["checks"]["transactions_root"], "pass");
     assert!(report["checks"]["checkpoint_anchor"]
         .as_str()
         .unwrap()
         .starts_with("not checked"));
+    let transaction_file = directory.join("transactions.parquet");
+    let mut changed_transactions = transactions.clone();
+    changed_transactions[0].raw_envelope = Some(vec![2, 0xc1, 0]);
+    let (bytes, entry) =
+        legacy_parquet::transactions::write_transactions(&changed_transactions).unwrap();
+    std::fs::write(&transaction_file, bytes).unwrap();
+    reseal_first(path, |m| {
+        let target = m
+            .files
+            .iter_mut()
+            .find(|f| f.table == Table::Transactions)
+            .unwrap();
+        *target = entry;
+    });
+    assert_failed(
+        &solo(&[path], &["--files", "--json"]),
+        "transaction hash differs from its raw envelope at block 1, index 0",
+    );
+    let (bytes, entry) = legacy_parquet::transactions::write_transactions(&transactions).unwrap();
+    std::fs::write(&transaction_file, bytes).unwrap();
+    reseal_first(path, |m| {
+        let target = m
+            .files
+            .iter_mut()
+            .find(|f| f.table == Table::Transactions)
+            .unwrap();
+        *target = entry;
+    });
     let mut changed_logs = logs.clone();
     changed_logs[0].data.push(0xff);
     let (bytes, entry) = legacy_parquet::logs::write_logs(&changed_logs).unwrap();
