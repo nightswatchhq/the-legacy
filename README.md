@@ -43,7 +43,7 @@ anything yet.** Precisely:
 | Ethereum receipts trie roots | chain ID 1 local cleaner check; header trust remains separate |
 | Ethereum withdrawal trie roots | chain ID 1 local cleaner check for EIP-4895 rows |
 | Checkpoint anchoring | not started |
-| `legacy-reader` | local, manifest-verified sealed log scans; object storage and broader queries not started |
+| `legacy-reader` | local, manifest-verified sealed core-table scans; object storage and indexed queries not started |
 | `solo serve`, all six Shadow sources | not started |
 
 `solo clean` says out loud which checks it performed and which it did not, and will keep doing so
@@ -129,7 +129,7 @@ blocks 20078592..=20090000 cover 2 relic(s), 2451..=2452
 ```
 crates/legacy-format   the executable half of the spec: geometry, JCS, manifests, pact, registry
 crates/legacy-parquet  headers/transactions/receipts/logs/withdrawals codecs, writer profile and file verification
-crates/legacy-reader   native local reads that re-verify manifest-bound bytes before yielding logs
+crates/legacy-reader   native local reads that re-verify manifest-bound bytes before yielding core rows
 crates/shadow          the ingesters that transcode chain history into relics
 crates/solo            the serving binary, and the cleaning that verifies what you are served
 docs/rfcs/             RFC-0001 and successors

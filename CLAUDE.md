@@ -41,7 +41,7 @@ implementation-linked amendments, not already supported interfaces.
   tables, plus verification against manifest file claims. No sealing, consensus validation or
   checkpoint verification.
 - `crates/legacy-reader` - native local sealed-history reads. It currently re-verifies
-  manifest-bound files before yielding log rows; object storage and the broader reader API remain
+  manifest-bound files before yielding core-table rows; object storage and indexed queries remain
   to be built.
 - `crates/shadow` - the six ingestion sources (§11). All skeleton so far.
 - `crates/solo` - serving (§13) and cleaning (§10). Manifest checks and optional local file checks

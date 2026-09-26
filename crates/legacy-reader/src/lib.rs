@@ -127,6 +127,100 @@ impl Corpus {
         Ok(out)
     }
 
+    /// Read headers intersecting `range` after verifying every contributing headers file.
+    pub fn headers(
+        &self,
+        range: RangeInclusive<u64>,
+    ) -> Result<Vec<legacy_format::headers::HeaderRow>, Error> {
+        let mut out = Vec::new();
+        for relic in self.overlapping(&range) {
+            let VerifiedRows::Headers(rows) = self.rows(relic, Table::Headers)? else {
+                return Err(Error::WrongRows {
+                    relic: relic.manifest.relic_index(),
+                    expected: "headers",
+                });
+            };
+            out.extend(
+                rows.into_iter()
+                    .filter(|row| range.contains(&row.block_number)),
+            );
+        }
+        Ok(out)
+    }
+
+    /// Read transactions intersecting `range` after verifying every contributing transaction file.
+    pub fn transactions(
+        &self,
+        range: RangeInclusive<u64>,
+    ) -> Result<Vec<legacy_format::transactions::TransactionRow>, Error> {
+        let mut out = Vec::new();
+        for relic in self.overlapping(&range) {
+            let VerifiedRows::Transactions(rows) = self.rows(relic, Table::Transactions)? else {
+                return Err(Error::WrongRows {
+                    relic: relic.manifest.relic_index(),
+                    expected: "transactions",
+                });
+            };
+            out.extend(
+                rows.into_iter()
+                    .filter(|row| range.contains(&row.block_number)),
+            );
+        }
+        Ok(out)
+    }
+
+    /// Read receipts intersecting `range` after verifying every contributing receipt file.
+    pub fn receipts(
+        &self,
+        range: RangeInclusive<u64>,
+    ) -> Result<Vec<legacy_format::receipts::ReceiptRow>, Error> {
+        let mut out = Vec::new();
+        for relic in self.overlapping(&range) {
+            let VerifiedRows::Receipts(rows) = self.rows(relic, Table::Receipts)? else {
+                return Err(Error::WrongRows {
+                    relic: relic.manifest.relic_index(),
+                    expected: "receipts",
+                });
+            };
+            out.extend(
+                rows.into_iter()
+                    .filter(|row| range.contains(&row.block_number)),
+            );
+        }
+        Ok(out)
+    }
+
+    /// Read withdrawals intersecting `range` after verifying every contributing withdrawal file.
+    pub fn withdrawals(
+        &self,
+        range: RangeInclusive<u64>,
+    ) -> Result<Vec<legacy_format::withdrawals::WithdrawalRow>, Error> {
+        let mut out = Vec::new();
+        for relic in self.overlapping(&range) {
+            let VerifiedRows::Withdrawals(rows) = self.rows(relic, Table::Withdrawals)? else {
+                return Err(Error::WrongRows {
+                    relic: relic.manifest.relic_index(),
+                    expected: "withdrawals",
+                });
+            };
+            out.extend(
+                rows.into_iter()
+                    .filter(|row| range.contains(&row.block_number)),
+            );
+        }
+        Ok(out)
+    }
+
+    fn overlapping<'a>(
+        &'a self,
+        range: &'a RangeInclusive<u64>,
+    ) -> impl Iterator<Item = &'a LocalRelic> + 'a {
+        self.relics.iter().filter(move |relic| {
+            relic.manifest.block_range.end >= *range.start()
+                && relic.manifest.block_range.start <= *range.end()
+        })
+    }
+
     fn rows(&self, relic: &LocalRelic, table: Table) -> Result<VerifiedRows, Error> {
         let entry = relic
             .manifest
