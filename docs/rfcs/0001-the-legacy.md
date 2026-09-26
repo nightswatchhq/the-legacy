@@ -188,8 +188,22 @@ hashing/bloom insertion direct.
 | `requests_hash` | FIXED_LEN_BYTE_ARRAY(32) | binary | yes | PLAIN | null pre-Prague (EIP-7685) |
 | `total_difficulty` | BYTE_ARRAY | binary (uint256 BE) | yes | PLAIN | carried from era1 pre-merge |
 
-Sort order: `block_number` ascending. `uint256` fields are stored as big-endian minimal-length byte
-arrays (RLP-integer convention) so re-encoding for trie work is a memcpy.
+Sort order: `block_number` strictly ascending, with no duplicates. `uint256` fields are stored
+as minimal big-endian magnitudes: zero is the empty byte array, while null means absent. RLP
+reconstruction must still add the appropriate integer/string prefixes; these are not complete
+RLP encodings. Each nullable fork field is preserved independently. Chain-specific fork activation
+and combinations are not validated by the row codec, and `extra_data` remains variable-length
+rather than imposing Ethereum's limit on every silo.
+
+The v1 writer applies §6.1 with the column encodings shown above. Dictionaries are enabled only
+for `ommers_hash` and `beneficiary`, with PLAIN fallback. All columns have page statistics; header
+blooms are not specified. Canonical rows follow exactly this column order (§11.1).
+
+When checking a complete relic, the headers table MUST contain exactly one row for every block
+in `block_range`. Stored `parent_hash` values must match the preceding stored `block_hash`, and
+the first/last row hashes and first parent must match the manifest boundary. This is **stored
+consistency**, not cryptographic header verification: §10.5 additionally requires reconstructing
+each header's RLP/Keccak hash and authenticating the chain to its trust anchor.
 
 ### 6.4 `transactions` table
 
@@ -571,6 +585,9 @@ claim about blob contents. This exclusion is deliberate and stated plainly.
 
 ### 10.5 Header chain
 
+- **Header hash:** reconstruct each execution header using its chain/fork-specific fields and
+  require `keccak256(header_rlp) == block_hash` before treating stored links as authenticated
+  commitments. Comparing claimed hash columns alone is insufficient.
 - **Linkage:** verify `headers[i].parent_hash == headers[i-1].block_hash` within and across relics
   (`boundary.parent_hash_of_start` links to the previous relic's `end_block_hash`).
 - **Pre-merge:** reconstruct the era1 SSZ accumulator (`hash_tree_root(List[HeaderRecord, 8192])`,
@@ -617,16 +634,22 @@ checks byte size, file BLAKE3, footer row count, row-group count and the sum of 
 It rejects unsupported table schema versions, missing files, symlinks and non-regular files.
 Hashing and decoding use the same in-memory bytes. No endpoint is contacted.
 
-For `logs` and `withdrawals`, file mode also decodes the table, checks schema/row invariants,
+For `headers`, `logs` and `withdrawals`, file mode also decodes the table, checks schema/row invariants,
 recomputes `content_hash`, checks the decoded count and requires every row's block to fall inside
 the relic range. Other tables report these decoded checks as **not checked**; a valid footer or
 file hash is not a schema or chain check. Aggregate content status is partial only if some table
 contents were actually checked, and unchecked if none were. A failure exits nonzero without
 printing a success report. Success is limited to the explicitly reported checks.
 
+Headers additionally check complete block coverage, stored parent links and manifest boundary
+agreement. These are reported as `header_coverage`, `stored_header_linkage` and
+`manifest_boundary`. `header_hashes` and authenticated `header_linkage` remain **not checked**:
+no RLP/Keccak reconstruction or checkpoint authentication has been implemented. Hash-consistent
+synthetic header columns can therefore pass the stored checks without representing a real chain.
+
 `--after <manifest>` provides predecessor pact context for a continuation. Its table files are
 not checked unless they are part of the requested manifest run. The report names that scope.
-Table completeness, reconstructed header linkage, transaction/receipt/withdrawal roots, era1
+Other table completeness, reconstructed header hashes/linkage, transaction/receipt/withdrawal roots, era1
 accumulators, finality, index correctness, producer signatures and checkpoint anchoring remain
 unimplemented. The example in §10.6 is the intended full report, not current executable output.
 The current file checker holds a file and decoded rows in memory and is not a streaming scanner.
@@ -702,8 +725,9 @@ remain covered by the file hash. Other nullable columns are not silently normali
 For example, null encodes as `00`, present empty binary as `010000000000000000`, and present
 binary `aabb` as `010000000000000002aabb`. Adjacent variable-width fields cannot alias. Golden
 primitive and logs-row vectors are in `crates/legacy-format/src/canonical.rs` and `logs.rs`.
-The initial implementation supports these primitives and complete `logs` and `withdrawals` rows. Other table
-codecs, including transaction normalization and trace enum mappings/order, remain to be implemented
+The initial implementation supports these primitives and complete `headers`, `logs` and
+`withdrawals` rows. Other table codecs, including transaction normalization and trace enum
+mappings/order, remain to be implemented
 and tested before their producers can claim conformance.
 
 ### 11.2 Reorgs at the seal boundary

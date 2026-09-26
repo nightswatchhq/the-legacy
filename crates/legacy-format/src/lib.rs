@@ -12,6 +12,7 @@
 pub mod canonical;
 pub mod error;
 pub mod hash;
+pub mod headers;
 pub mod jcs;
 pub mod logs;
 pub mod manifest;

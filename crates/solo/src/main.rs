@@ -159,7 +159,11 @@ fn clean(
                 "file_sizes": byte_status,
                 "parquet_counts": byte_status,
                 "content_hashes": content_status,
-                "header_linkage": "not checked (not implemented)",
+                "header_coverage": byte_status,
+                "stored_header_linkage": byte_status,
+                "manifest_boundary": byte_status,
+                "header_hashes": "not checked (RLP/Keccak reconstruction not implemented)",
+                "header_linkage": "not checked (stored hashes have not been reconstructed)",
                 "table_completeness": "not checked (not implemented)",
                 "producer_signatures": "not checked (not implemented)",
                 "era1_accumulator": "not checked (not implemented)",
@@ -193,6 +197,9 @@ fn clean(
         println!("checked     manifest structure, relic linkage, pact chain");
         if files {
             println!("checked     local file sizes, BLAKE3 hashes, Parquet footer counts");
+            println!(
+                "checked     complete header coverage, stored parent links, manifest boundaries"
+            );
             for file in &file_reports {
                 println!(
                     "table       relic {} {}: schema/rows/content hash/block bounds: {}",
@@ -202,7 +209,7 @@ fn clean(
         } else {
             println!("NOT checked file sizes, file hashes, Parquet metadata or table contents");
         }
-        println!("NOT checked table completeness, header linkage, transactions/receipts/withdrawals roots, checkpoint anchor, producer signatures");
+        println!("NOT checked other table completeness, reconstructed header hashes/linkage, transactions/receipts/withdrawals roots, checkpoint anchor, producer signatures");
         println!("NOT checked era1 accumulator, finality, index sidecars");
         println!("scope       requested manifests only; --after supplies predecessor context, not verified file coverage");
         if traces > 0 {

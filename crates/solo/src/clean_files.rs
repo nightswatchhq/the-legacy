@@ -27,6 +27,9 @@ pub struct FileChecks {
     pub content_hash: &'static str,
     pub decoded_row_count: &'static str,
     pub block_range: &'static str,
+    pub header_coverage: &'static str,
+    pub stored_header_linkage: &'static str,
+    pub manifest_boundary: &'static str,
 }
 
 /// Run after pact/manifest validation. No success report is emitted until all files pass.
@@ -79,15 +82,10 @@ pub fn check(
             // the hash of one file and the rows of a replacement.
             let bytes = std::fs::read(&file_path)
                 .map_err(|e| format!("reading {}: {e}", file_path.display()))?;
-            let decoded = verify_file(
-                bytes.into(),
-                entry,
-                manifest.block_range,
-                manifest.spec_version,
-            )
-            .map_err(|e| format!("{}: {e}", file_path.display()))?;
+            let decoded = verify_file(bytes.into(), entry, manifest)
+                .map_err(|e| format!("{}: {e}", file_path.display()))?;
             let table_status = match decoded {
-                DecodedChecks::Passed => PASS,
+                DecodedChecks::Passed | DecodedChecks::HeadersPassed => PASS,
                 DecodedChecks::NotImplemented => NO_CODEC,
             };
             reports.push(FileReport {
@@ -103,6 +101,21 @@ pub fn check(
                     content_hash: table_status,
                     decoded_row_count: table_status,
                     block_range: table_status,
+                    header_coverage: if decoded == DecodedChecks::HeadersPassed {
+                        PASS
+                    } else {
+                        "n/a (not headers)"
+                    },
+                    stored_header_linkage: if decoded == DecodedChecks::HeadersPassed {
+                        PASS
+                    } else {
+                        "n/a (not headers)"
+                    },
+                    manifest_boundary: if decoded == DecodedChecks::HeadersPassed {
+                        PASS
+                    } else {
+                        "n/a (not headers)"
+                    },
                 },
             });
         }

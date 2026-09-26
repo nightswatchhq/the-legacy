@@ -110,9 +110,9 @@ fn clean_rejects_a_relic_edited_after_sealing() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-// Deliberately incomplete header schema: until the header codec exists, a byte/metadata check
-// must not upgrade this to "header contents verified". Everything here is synthetic.
-fn header_fixture(start: u64) -> (Vec<u8>, FileEntry) {
+// The transaction codec is not implemented. A valid footer must not be reported as decoded
+// table verification. Everything here, including the header hashes below, is synthetic.
+fn unsupported_fixture(start: u64) -> (Vec<u8>, FileEntry) {
     use arrow_array::{RecordBatch, UInt64Array};
     use arrow_schema::{DataType, Field, Schema};
     use parquet::arrow::ArrowWriter;
@@ -133,8 +133,8 @@ fn header_fixture(start: u64) -> (Vec<u8>, FileEntry) {
     writer.write(&batch).unwrap();
     writer.close().unwrap();
     let entry = FileEntry {
-        name: "headers.parquet".into(),
-        table: Table::Headers,
+        name: "transactions.parquet".into(),
+        table: Table::Transactions,
         byte_size: bytes.len() as u64,
         blake3: blake3(&bytes),
         content_hash: Hash32::ZERO,
@@ -142,6 +142,53 @@ fn header_fixture(start: u64) -> (Vec<u8>, FileEntry) {
         row_groups: 1,
     };
     (bytes, entry)
+}
+
+fn header_rows(start: u64) -> Vec<legacy_format::headers::HeaderRow> {
+    let boundary = manifest(start / 8192).boundary;
+    let mut previous = *boundary.parent_hash_of_start.as_bytes();
+    (start..start + 8192)
+        .map(|number| {
+            let hash = if number == start {
+                *boundary.start_block_hash.as_bytes()
+            } else if number == start + 8191 {
+                *boundary.end_block_hash.as_bytes()
+            } else {
+                *blake3(format!("header{number}").as_bytes()).as_bytes()
+            };
+            let row = legacy_format::headers::HeaderRow {
+                block_number: number,
+                block_hash: hash,
+                parent_hash: previous,
+                ommers_hash: [0; 32],
+                beneficiary: [0; 20],
+                state_root: [0; 32],
+                transactions_root: [0; 32],
+                receipts_root: [0; 32],
+                logs_bloom: [0; 256],
+                difficulty: vec![],
+                gas_limit: 30_000_000,
+                gas_used: 0,
+                timestamp: number,
+                extra_data: vec![],
+                mix_hash: [0; 32],
+                nonce: [0; 8],
+                base_fee_per_gas: Some(vec![]),
+                withdrawals_root: None,
+                blob_gas_used: None,
+                excess_blob_gas: None,
+                parent_beacon_block_root: None,
+                requests_hash: None,
+                total_difficulty: None,
+            };
+            previous = hash;
+            row
+        })
+        .collect()
+}
+
+fn header_fixture(start: u64) -> (Vec<u8>, FileEntry) {
+    legacy_parquet::headers::write_headers(&header_rows(start)).unwrap()
 }
 
 fn log_fixture(block: u64) -> (Vec<u8>, FileEntry) {
@@ -181,6 +228,7 @@ fn write_local_chain(dir: &Path, n: u64) -> Vec<PathBuf> {
                 header_fixture(i * 8192),
                 log_fixture(i * 8192 + 1),
                 withdrawal_fixture(i * 8192 + 2),
+                unsupported_fixture(i * 8192),
             ] {
                 std::fs::write(relic_dir.join(&entry.name), bytes).unwrap();
                 m.files.push(entry);
@@ -238,11 +286,11 @@ fn file_cleaning_reports_precisely_which_tables_were_decoded() {
         .as_str()
         .unwrap()
         .starts_with("partial"));
-    assert_eq!(report["files"].as_array().unwrap().len(), 6);
+    assert_eq!(report["files"].as_array().unwrap().len(), 8);
     for file in report["files"].as_array().unwrap() {
         assert_eq!(file["checks"]["blake3"], "pass");
         let status = file["checks"]["content_hash"].as_str().unwrap();
-        if file["table"] == "headers" {
+        if file["table"] == "transactions" {
             assert!(status.starts_with("not checked"));
             assert!(file["checks"]["schema"]
                 .as_str()
@@ -259,6 +307,7 @@ fn file_cleaning_reports_precisely_which_tables_were_decoded() {
         "withdrawals_root",
         "checkpoint_anchor",
         "header_linkage",
+        "header_hashes",
         "table_completeness",
         "producer_signatures",
         "era1_accumulator",
@@ -273,7 +322,10 @@ fn file_cleaning_reports_precisely_which_tables_were_decoded() {
     let prose = solo(&[&paths[0]], &["--files"]);
     assert!(prose.status.success());
     let text = String::from_utf8(prose.stdout).unwrap();
-    assert!(text.contains("headers.parquet: schema/rows/content hash/block bounds: not checked"));
+    assert!(
+        text.contains("transactions.parquet: schema/rows/content hash/block bounds: not checked")
+    );
+    assert!(text.contains("headers.parquet: schema/rows/content hash/block bounds: pass"));
     assert!(text.contains("withdrawals.parquet: schema/rows/content hash/block bounds: pass"));
     std::fs::remove_dir_all(dir).unwrap();
 }
@@ -440,7 +492,7 @@ fn table_symlinks_are_not_followed() {
 }
 
 #[test]
-fn headers_only_reports_no_decoded_checks_rather_than_partial_success() {
+fn headers_only_reports_stored_checks_without_claiming_authentication() {
     let dir = scratch("local-headers-only");
     let paths = write_local_chain(&dir, 1);
     reseal_first(&paths[0], |m| m.files.retain(|f| f.table == Table::Headers));
@@ -452,9 +504,80 @@ fn headers_only_reports_no_decoded_checks_rather_than_partial_success() {
     );
     let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(report["checks"]["file_hashes"], "pass");
-    assert!(report["checks"]["content_hashes"]
-        .as_str()
-        .unwrap()
-        .starts_with("not checked"));
+    for check in [
+        "content_hashes",
+        "header_coverage",
+        "stored_header_linkage",
+        "manifest_boundary",
+    ] {
+        assert_eq!(report["checks"][check], "pass");
+    }
+    for check in [
+        "header_hashes",
+        "header_linkage",
+        "checkpoint_anchor",
+        "finality",
+    ] {
+        assert!(report["checks"][check]
+            .as_str()
+            .unwrap()
+            .starts_with("not checked"));
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn resealed_missing_headers_and_broken_stored_links_fail() {
+    for kind in [
+        "empty",
+        "missing",
+        "parent",
+        "start_boundary",
+        "end_boundary",
+        "parent_boundary",
+    ] {
+        let dir = scratch(&format!("header-{kind}"));
+        let paths = write_local_chain(&dir, 1);
+        let mut rows = header_rows(0);
+        match kind {
+            "empty" => rows.clear(),
+            "missing" => {
+                rows.pop();
+            }
+            "parent" => rows[100].parent_hash = [0xff; 32],
+            "start_boundary" => {
+                rows[0].block_hash = [0xff; 32];
+                rows[1].parent_hash = [0xff; 32];
+            }
+            "end_boundary" => rows[8191].block_hash = [0xff; 32],
+            "parent_boundary" => rows[0].parent_hash = [0xff; 32],
+            _ => unreachable!(),
+        }
+        let (bytes, entry) = legacy_parquet::headers::write_headers(&rows).unwrap();
+        std::fs::write(paths[0].parent().unwrap().join("headers.parquet"), bytes).unwrap();
+        reseal_first(&paths[0], |m| m.files[0] = entry);
+        let expected = match kind {
+            "empty" | "missing" => "cover every block",
+            "parent" => "parent link is broken at block 100",
+            _ => "manifest boundary",
+        };
+        assert_failed(&solo(&[&paths[0]], &["--files", "--json"]), expected);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[test]
+fn a_non_header_file_cannot_masquerade_as_headers_even_with_matching_hashes() {
+    let dir = scratch("header-schema");
+    let paths = write_local_chain(&dir, 1);
+    let (bytes, mut entry) = unsupported_fixture(0);
+    entry.table = Table::Headers;
+    entry.name = "headers.parquet".into();
+    std::fs::write(paths[0].parent().unwrap().join(&entry.name), bytes).unwrap();
+    reseal_first(&paths[0], |m| m.files[0] = entry);
+    assert_failed(
+        &solo(&[&paths[0]], &["--files"]),
+        "expected exactly 23 v1 header columns",
+    );
     std::fs::remove_dir_all(dir).unwrap();
 }

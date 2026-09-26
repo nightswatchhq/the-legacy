@@ -12,7 +12,8 @@ implementation-linked amendments, not already supported interfaces.
 2. **Never overstate verification.** Every report, log line, doc and README row must say what was
    actually checked and what was not. `solo clean` currently checks manifest structure, relic
    linkage and the pact chain by default. `--files` adds local byte integrity, Parquet counts and
-   decoded checks for logs/withdrawals; it names every remaining unchecked table and chain check.
+   decoded checks for headers/logs/withdrawals, including header coverage and stored links. It
+   names every remaining unchecked table and chain check; stored links do not authenticate hashes.
    This is the single most important rule in the repo: the whole project's
    value is that its claims are true.
 3. **Traces are not header-committed.** No cryptographic claim about the traces tier is acceptable
@@ -26,10 +27,10 @@ implementation-linked amendments, not already supported interfaces.
 ## Shape
 
 - `crates/legacy-format` - geometry, canonical JSON (JCS), manifests, the pact chain, the registry.
-  Canonical row primitives and typed logs/withdrawals rows and content hashes also live here.
+  Canonical row primitives and typed headers/logs/withdrawals rows and content hashes live here.
   No Parquet, no object storage, no JSON-RPC. Shadow and Solo agree on what a relic is by depending
   on this, not by both being careful.
-- `crates/legacy-parquet` - Parquet schemas, shared writer profile, logs/withdrawals codecs and
+- `crates/legacy-parquet` - Parquet schemas, shared writer profile, headers/logs/withdrawals codecs and
   verification of byte buffers against manifest file claims. No sealing or chain verification.
 - `crates/shadow` - the six ingestion sources (§11). All skeleton so far.
 - `crates/solo` - serving (§13) and cleaning (§10). Manifest checks and optional local file checks

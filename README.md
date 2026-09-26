@@ -34,9 +34,9 @@ anything yet.** Precisely:
 |---|---|
 | RFC-0001 | written, Draft |
 | Relic geometry, canonical JSON (JCS), manifests, pact chain, registry | implemented |
-| Canonical row primitives and logs/withdrawals content hashing | implemented, golden byte vectors |
+| Canonical row primitives and headers/logs/withdrawals content hashing | implemented, golden byte vectors |
 | `solo clean` (manifest structure, relic linkage, pact chain) | implemented; `--files` adds local integrity checks |
-| Logs and withdrawals Parquet codecs | implemented, local synthetic round trips; no sealer |
+| Headers, logs and withdrawals Parquet codecs | implemented, local synthetic round trips; no sealer |
 | Other Parquet tables, index sidecars | not started |
 | Trie rebuilding, checkpoint anchoring | not started |
 | `solo serve`, all six Shadow sources | not started |
@@ -45,10 +45,12 @@ anything yet.** Precisely:
 until each one is real. A verification report that implies more than it checked is worse than no
 report at all.
 
-The workspace has 80 tests. `solo clean --files` checks each listed file's size, BLAKE3 and
-Parquet footer counts. For logs and withdrawals it also checks schema, row order, canonical
-content hash, decoded count and block bounds. Other table contents are explicitly unchecked.
-None of these checks establishes complete chain history, trie roots, finality or checkpoint trust.
+The workspace has 91 tests. `solo clean --files` checks each listed file's size, BLAKE3 and
+Parquet footer counts. For headers, logs and withdrawals it also checks schema, row order,
+canonical content hash, decoded count and block bounds. Headers must cover every block in the
+relic, have consistent stored parent links, and match the manifest boundaries. These checks do
+not reconstruct the block hashes or authenticate their chain. Other table contents, trie roots,
+finality and checkpoint trust remain explicitly unchecked.
 
 ## Try it
 
@@ -102,7 +104,7 @@ blocks 20078592..=20090000 cover 2 relic(s), 2451..=2452
 
 ```
 crates/legacy-format   the executable half of the spec: geometry, JCS, manifests, pact, registry
-crates/legacy-parquet  logs/withdrawals codecs, writer profile and manifest file verification
+crates/legacy-parquet  headers/logs/withdrawals codecs, writer profile and file verification
 crates/shadow          the ingesters that transcode chain history into relics
 crates/solo            the serving binary, and the cleaning that verifies what you are served
 docs/rfcs/             RFC-0001 and successors

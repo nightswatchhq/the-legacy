@@ -443,8 +443,9 @@ in the corpus. There is no universal zero-cost claim for arbitrary indexer confi
 
 These are implementation-linked proposals, not claims that all changes land with this draft.
 The canonical row encoding and exact-mirror versus content-identity corrections are already
-specified in RFC-0001 and implemented for logs and withdrawals. Local `solo clean --files` now
-checks file integrity and those two table codecs (RFC-0001 §10.7); the native reader and its
+specified in RFC-0001 and implemented for headers, logs and withdrawals. Local `solo clean --files`
+now checks file integrity, those table codecs, header coverage and stored parent/boundary
+consistency (RFC-0001 §10.7), but does not authenticate header hashes. The native reader and its
 policy API remain proposed. The following remain follow-ups.
 
 | RFC-0001 | Required amendment |

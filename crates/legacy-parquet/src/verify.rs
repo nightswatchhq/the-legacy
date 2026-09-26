@@ -2,7 +2,7 @@
 
 use bytes::Bytes;
 use legacy_format::hash::blake3;
-use legacy_format::{BlockRange, FileEntry, Table, SPEC_VERSION};
+use legacy_format::{FileEntry, Manifest, Table, SPEC_VERSION};
 use parquet::file::reader::{FileReader, SerializedFileReader};
 
 use crate::{Error, Result};
@@ -11,20 +11,20 @@ use crate::{Error, Result};
 pub enum DecodedChecks {
     /// Schema, row order, content hash, decoded count and block bounds all passed.
     Passed,
+    /// Decoded checks plus complete header coverage, stored parent links and manifest boundaries.
+    /// This does not reconstruct or authenticate block hashes.
+    HeadersPassed,
     /// Only file bytes and Parquet metadata were checked; the table codec is not implemented.
     NotImplemented,
 }
 
 /// Check the same byte buffer for integrity, footer counts, and supported table contents.
-/// Success does not prove complete block coverage, finality, trie roots, or checkpoint trust.
-pub fn verify_file(
-    bytes: Bytes,
-    entry: &FileEntry,
-    range: BlockRange,
-    spec_version: u32,
-) -> Result<DecodedChecks> {
+/// Only header row coverage is checked; other-table completeness, finality, trie roots and
+/// checkpoint trust are not. Stored header hashes are not reconstructed here.
+pub fn verify_file(bytes: Bytes, entry: &FileEntry, manifest: &Manifest) -> Result<DecodedChecks> {
+    let range = manifest.block_range;
     let bad = |message: &str| Error::Verification(format!("{}: {message}", entry.name));
-    if spec_version != SPEC_VERSION {
+    if manifest.spec_version != SPEC_VERSION {
         return Err(bad("unsupported spec_version for table verification"));
     }
     if entry.name != entry.table.file_name() {
@@ -54,6 +54,15 @@ pub fn verify_file(
         return Err(bad("row-group counts do not sum to the file row count"));
     }
     let (hash, count, in_range) = match entry.table {
+        Table::Headers => {
+            let rows = crate::headers::read_headers(bytes)?;
+            legacy_format::headers::verify_relic_rows(&rows, range, manifest.boundary)?;
+            (
+                legacy_format::headers::content_hash(&rows)?,
+                rows.len(),
+                true,
+            )
+        }
         Table::Logs => {
             let rows = crate::logs::read_logs(bytes)?;
             (
@@ -81,5 +90,9 @@ pub fn verify_file(
     if !in_range {
         return Err(bad("decoded block number is outside the relic range"));
     }
-    Ok(DecodedChecks::Passed)
+    Ok(if entry.table == Table::Headers {
+        DecodedChecks::HeadersPassed
+    } else {
+        DecodedChecks::Passed
+    })
 }
