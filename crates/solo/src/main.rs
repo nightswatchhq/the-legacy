@@ -50,7 +50,8 @@ enum Command {
         json: bool,
 
         /// Check local table files beside each manifest: bytes, footer counts, and implemented
-        /// table codecs. Does not verify trie roots, finality, signatures or checkpoint trust.
+        /// table codecs. Chain ID 1 also verifies available transaction, receipt and withdrawal
+        /// roots. Does not verify finality, signatures or checkpoint trust.
         #[arg(long)]
         files: bool,
     },
