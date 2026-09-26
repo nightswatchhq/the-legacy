@@ -34,10 +34,10 @@ anything yet.** Precisely:
 |---|---|
 | RFC-0001 | written, Draft |
 | Relic geometry, canonical JSON (JCS), manifests, pact chain, registry | implemented |
-| Canonical row primitives and headers/transactions/logs/withdrawals content hashing | implemented, golden byte vectors |
+| Canonical row primitives and headers/transactions/receipts/logs/withdrawals content hashing | implemented, golden byte vectors |
 | `solo clean` (manifest structure, relic linkage, pact chain) | implemented; `--files` adds local integrity checks |
-| Headers, transactions, logs and withdrawals Parquet codecs | implemented, local synthetic round trips; no sealer |
-| Receipts/traces Parquet codecs, index sidecars | not started |
+| Headers, transactions, receipts, logs and withdrawals Parquet codecs | implemented, local synthetic round trips; no sealer |
+| Traces Parquet codec, index sidecars | not started |
 | Trie rebuilding, checkpoint anchoring | not started |
 | `solo serve`, all six Shadow sources | not started |
 
@@ -45,15 +45,16 @@ anything yet.** Precisely:
 until each one is real. A verification report that implies more than it checked is worse than no
 report at all.
 
-The workspace has 106 tests. `solo clean --files` checks each listed file's size, BLAKE3 and
-Parquet footer counts. For headers, transactions, logs and withdrawals it also checks schema, row order,
-canonical content hash, decoded count and block bounds. Headers must cover every block in the
+The workspace has 118 tests. `solo clean --files` checks each listed file's size, BLAKE3 and
+Parquet footer counts. For all five core tables it also checks schema, row order, canonical
+content hash, decoded count and block bounds. Headers must cover every block in the
 relic, have consistent stored parent links, and match the manifest boundaries. For chain ID 1,
 it also reconstructs RLP/Keccak header hashes using Ethereum layouts through Prague; other chain
 profiles remain unchecked. Hash-consistent synthetic chains can still pass. Consensus rules
 (including fork activation), other table contents, trie roots, finality and checkpoint trust
 remain explicitly unchecked. Transaction envelope agreement, transaction hashes, signatures and
-sender recovery also remain unchecked.
+sender recovery also remain unchecked, as do receipt agreement with transactions/logs, bloom
+contents and derived gas/fee fields.
 
 ## Try it
 
@@ -107,7 +108,7 @@ blocks 20078592..=20090000 cover 2 relic(s), 2451..=2452
 
 ```
 crates/legacy-format   the executable half of the spec: geometry, JCS, manifests, pact, registry
-crates/legacy-parquet  headers/transactions/logs/withdrawals codecs, writer profile and file verification
+crates/legacy-parquet  headers/transactions/receipts/logs/withdrawals codecs, writer profile and file verification
 crates/shadow          the ingesters that transcode chain history into relics
 crates/solo            the serving binary, and the cleaning that verifies what you are served
 docs/rfcs/             RFC-0001 and successors

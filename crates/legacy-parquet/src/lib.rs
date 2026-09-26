@@ -1,10 +1,11 @@
-//! Parquet codecs for RFC-0001 tables. Headers, transactions, logs and withdrawals are implemented.
+//! Parquet codecs for RFC-0001 tables. Headers, transactions, receipts, logs and withdrawals are implemented.
 //!
 //! These are in-memory table codecs, not a relic sealer or a chain verifier. A matching content
 //! hash says nothing about whether logs match receipts or an authenticated block header.
 
 pub mod headers;
 pub mod logs;
+pub mod receipts;
 pub mod transactions;
 pub mod verify;
 pub mod withdrawals;
@@ -26,6 +27,8 @@ pub enum Error {
     Withdrawals(#[from] legacy_format::withdrawals::WithdrawalError),
     #[error(transparent)]
     Transactions(#[from] legacy_format::transactions::TransactionError),
+    #[error(transparent)]
+    Receipts(#[from] legacy_format::receipts::ReceiptError),
     #[error("invalid table schema: {0}")]
     Schema(String),
     #[error("invalid table row: {0}")]

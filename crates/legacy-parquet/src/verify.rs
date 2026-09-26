@@ -76,6 +76,14 @@ pub fn verify_file(bytes: Bytes, entry: &FileEntry, manifest: &Manifest) -> Resu
                 rows.iter().all(|r| range.contains(r.block_number)),
             )
         }
+        Table::Receipts => {
+            let rows = crate::receipts::read_receipts(bytes)?;
+            (
+                legacy_format::receipts::content_hash(&rows)?,
+                rows.len(),
+                rows.iter().all(|r| range.contains(r.block_number)),
+            )
+        }
         Table::Logs => {
             let rows = crate::logs::read_logs(bytes)?;
             (

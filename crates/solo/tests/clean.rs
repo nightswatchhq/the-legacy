@@ -110,7 +110,7 @@ fn clean_rejects_a_relic_edited_after_sealing() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-// The receipt codec is not implemented. A valid footer must not be reported as decoded
+// The trace codec is not implemented. A valid footer must not be reported as decoded
 // table verification. Everything here, including the header hashes below, is synthetic.
 fn unsupported_fixture(start: u64) -> (Vec<u8>, FileEntry) {
     use arrow_array::{RecordBatch, UInt64Array};
@@ -133,8 +133,8 @@ fn unsupported_fixture(start: u64) -> (Vec<u8>, FileEntry) {
     writer.write(&batch).unwrap();
     writer.close().unwrap();
     let entry = FileEntry {
-        name: "receipts.parquet".into(),
-        table: Table::Receipts,
+        name: "traces.parquet".into(),
+        table: Table::Traces,
         byte_size: bytes.len() as u64,
         blake3: blake3(&bytes),
         content_hash: Hash32::ZERO,
@@ -290,7 +290,7 @@ fn file_cleaning_reports_precisely_which_tables_were_decoded() {
     for file in report["files"].as_array().unwrap() {
         assert_eq!(file["checks"]["blake3"], "pass");
         let status = file["checks"]["content_hash"].as_str().unwrap();
-        if file["table"] == "receipts" {
+        if file["table"] == "traces" {
             assert!(status.starts_with("not checked"));
             assert!(file["checks"]["schema"]
                 .as_str()
@@ -322,7 +322,7 @@ fn file_cleaning_reports_precisely_which_tables_were_decoded() {
     let prose = solo(&[&paths[0]], &["--files"]);
     assert!(prose.status.success());
     let text = String::from_utf8(prose.stdout).unwrap();
-    assert!(text.contains("receipts.parquet: schema/rows/content hash/block bounds: not checked"));
+    assert!(text.contains("traces.parquet: schema/rows/content hash/block bounds: not checked"));
     assert!(text.contains("headers.parquet: schema/rows/content hash/block bounds: pass"));
     assert!(text.contains("withdrawals.parquet: schema/rows/content hash/block bounds: pass"));
     std::fs::remove_dir_all(dir).unwrap();
@@ -695,6 +695,89 @@ fn transaction_content_checks_do_not_claim_envelope_or_trie_verification() {
     reseal_first(&paths[0], |m| m.files[4] = entry);
     assert_failed(
         &solo(&[&paths[0]], &["--files", "--json"]),
+        "outside the relic range",
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+fn receipt_row() -> legacy_format::receipts::ReceiptRow {
+    legacy_format::receipts::ReceiptRow {
+        block_number: 8192,
+        transaction_index: 7,
+        transaction_hash: [0x11; 32],
+        tx_type: 2,
+        status: Some(1),
+        post_state: None,
+        cumulative_gas_used: u64::MAX,
+        logs_bloom: [0x22; 256],
+        gas_used: Some(21000),
+        contract_address: Some([0x33; 20]),
+        effective_gas_price: Some(vec![1, 2]),
+        blob_gas_used: Some(131072),
+        blob_gas_price: Some(vec![]),
+        deposit_nonce: Some(u64::MAX),
+        deposit_receipt_version: Some(1),
+        l1_fee: Some(vec![3]),
+        l1_gas_used: None,
+        l1_gas_price: Some(vec![4]),
+        l1_fee_scalar: Some(vec![0, 5]),
+    }
+}
+
+#[test]
+fn all_core_tables_pass_content_checks_without_claiming_cross_table_verification() {
+    let dir = scratch("receipts");
+    let paths = write_local_chain(&dir, 1);
+    let path = &paths[0];
+    let mut transaction = transaction_row();
+    transaction.block_number = 7;
+    let mut receipt = receipt_row();
+    receipt.block_number = 7;
+    let (tx_bytes, tx_entry) =
+        legacy_parquet::transactions::write_transactions(&[transaction]).unwrap();
+    let (bytes, entry) =
+        legacy_parquet::receipts::write_receipts(std::slice::from_ref(&receipt)).unwrap();
+    let file_path = path.parent().unwrap().join(&entry.name);
+    std::fs::write(&file_path, bytes).unwrap();
+    std::fs::write(path.parent().unwrap().join(&tx_entry.name), tx_bytes).unwrap();
+    reseal_first(path, |m| {
+        m.files.retain(|f| f.table != Table::Traces);
+        m.files.push(tx_entry);
+        m.files.push(entry);
+    });
+    let out = solo(&[path], &["--files", "--json"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(report["checks"]["content_hashes"], "pass");
+    assert_eq!(report["files"].as_array().unwrap().len(), 5);
+    assert!(report["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|file| file["checks"]["content_hash"] == "pass"));
+    for check in [
+        "receipt_consistency",
+        "receipts_root",
+        "table_completeness",
+        "checkpoint_anchor",
+    ] {
+        assert!(report["checks"][check]
+            .as_str()
+            .unwrap()
+            .starts_with("not checked"));
+    }
+    reseal_first(path, |m| m.files[4].content_hash = Hash32::ZERO);
+    assert_failed(&solo(&[path], &["--files", "--json"]), "content_hash");
+    receipt.block_number = 8192;
+    let (bytes, entry) = legacy_parquet::receipts::write_receipts(&[receipt]).unwrap();
+    std::fs::write(&file_path, bytes).unwrap();
+    reseal_first(path, |m| m.files[4] = entry);
+    assert_failed(
+        &solo(&[path], &["--files", "--json"]),
         "outside the relic range",
     );
     std::fs::remove_dir_all(dir).unwrap();

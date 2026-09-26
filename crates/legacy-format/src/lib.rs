@@ -18,6 +18,7 @@ pub mod jcs;
 pub mod logs;
 pub mod manifest;
 pub mod pact;
+pub mod receipts;
 pub mod registry;
 pub mod relic;
 pub mod transactions;

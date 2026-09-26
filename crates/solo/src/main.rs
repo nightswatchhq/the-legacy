@@ -184,6 +184,7 @@ fn clean(
                 "transaction_envelopes": "not checked (RLP semantics, hash and raw/structured agreement not implemented)",
                 "transaction_signatures": "not checked (signature validity and sender recovery not implemented)",
                 "transactions_root": "not checked (not implemented)",
+                "receipt_consistency": "not checked (transaction/log agreement, blooms and derived fields not implemented)",
                 "receipts_root": "not checked (not implemented)",
                 "withdrawals_root": "not checked (not implemented)",
                 "checkpoint_anchor": "not checked (not implemented)",
@@ -226,6 +227,7 @@ fn clean(
         println!("header hashes/linkage: {header_hash_status} (Ethereum layout through Prague; requested files only)");
         println!("NOT checked consensus rules/fork schedule, other table completeness, transactions/receipts/withdrawals roots, checkpoint anchor, producer signatures");
         println!("NOT checked transaction envelopes, RLP semantics, transaction hashes, signatures or sender recovery");
+        println!("NOT checked receipt transaction/log agreement, blooms or derived fields");
         println!("NOT checked era1 accumulator, finality, index sidecars");
         println!("scope       requested manifests only; --after supplies predecessor context, not verified file coverage");
         if traces > 0 {

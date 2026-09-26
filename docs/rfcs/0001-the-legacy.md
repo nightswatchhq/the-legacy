@@ -283,7 +283,7 @@ specified. These are storage/content checks, not transaction or trie verificatio
 | `blob_gas_used` | INT64 | uint64 | yes | DELTA_BINARY_PACKED | 4844 |
 | `blob_gas_price` | BYTE_ARRAY | binary (uint256 BE) | yes | PLAIN | 4844 |
 | `deposit_nonce` | INT64 | uint64 | yes | DELTA_BINARY_PACKED | OP Regolith+ |
-| `deposit_receipt_version` | INT32 | uint8 | yes | RLE | OP Canyon+ |
+| `deposit_receipt_version` | INT32 | uint8 | yes | RLE_DICTIONARY | OP Canyon+ |
 | `l1_fee` | BYTE_ARRAY | binary (uint256 BE) | yes | PLAIN | OP-stack |
 | `l1_gas_used` | BYTE_ARRAY | binary (uint256 BE) | yes | PLAIN | OP-stack |
 | `l1_gas_price` | BYTE_ARRAY | binary (uint256 BE) | yes | PLAIN | OP-stack |
@@ -291,7 +291,27 @@ specified. These are storage/content checks, not transaction or trie verificatio
 
 Exactly one of `status`/`post_state` is non-null per row: pre-Byzantium receipts carry a 32-byte
 intermediate state root; EIP-658 (Byzantium) replaced it with a boolean status. This distinction is
-essential to rebuild the receipts trie leaf bytes correctly (§10.2).
+essential to rebuild the receipts trie leaf bytes correctly (§10.2). A present status MUST be
+0 or 1, as defined by [EIP-658](https://eips.ethereum.org/EIPS/eip-658).
+
+Sort order: (`block_number`, `transaction_index`), strictly increasing with no duplicate keys.
+The codec permits slices, so it does not require contiguous transaction indices or prove that
+all transactions have receipts. All uint256 columns use minimal big-endian magnitudes as in
+§11.1; present empty bytes mean zero, and null means absent. `l1_fee_scalar` is opaque binary,
+not a uint256, and the codec preserves its bytes without interpretation or normalization.
+
+The v1 writer follows §6.1. Dictionaries are enabled on `type`, `status`, `contract_address`
+and `deposit_receipt_version`, with PLAIN fallback. Delta encoding applies to the integer
+columns marked above; remaining columns use PLAIN. All columns have page statistics and no
+native receipt blooms are specified. The original bare RLE entry for the integer
+`deposit_receipt_version` was invalid: [Parquet's RLE value encoding](https://parquet.apache.org/docs/file-format/data-pages/encodings/)
+applies to booleans and dictionary indices, not plain INT32 values.
+
+The implemented codec checks these row invariants and preserves all 19 columns. It does not
+validate fork activation, chain-specific field combinations, transaction/log correspondence,
+bloom contents, cumulative/derived gas fields, fee calculations or receipts trie roots. These
+require later chain-aware or cross-table verification; a matching content hash is not a claim
+that the receipt describes a real transaction.
 
 ### 6.6 `logs` table
 
@@ -656,7 +676,8 @@ checks byte size, file BLAKE3, footer row count, row-group count and the sum of 
 It rejects unsupported table schema versions, missing files, symlinks and non-regular files.
 Hashing and decoding use the same in-memory bytes. No endpoint is contacted.
 
-For `headers`, `transactions`, `logs` and `withdrawals`, file mode also decodes the table, checks schema/row invariants,
+For `headers`, `transactions`, `receipts`, `logs` and `withdrawals`, file mode also decodes the
+table, checks schema/row invariants,
 recomputes `content_hash`, checks the decoded count and requires every row's block to fall inside
 the relic range. Other tables report these decoded checks as **not checked**; a valid footer or
 file hash is not a schema or chain check. Aggregate content status is partial only if some table
@@ -686,7 +707,9 @@ checkpoint, era1 accumulator or finality check.
 `--after <manifest>` provides predecessor pact context for a continuation. Its table files are
 not checked unless they are part of the requested manifest run. The report names that scope.
 Transaction envelope semantics (including raw/structured agreement and transaction hashes) and
-signature validity/sender recovery are separately reported as **not checked**. Other table
+signature validity/sender recovery are separately reported as **not checked**. Receipt agreement
+with transactions/logs, bloom contents and derived fields also report **not checked** under
+`receipt_consistency`. Other table
 completeness, consensus rules, transaction/receipt/withdrawal roots, era1
 accumulators, finality, index correctness, producer signatures and checkpoint anchoring remain
 unimplemented. The example in §10.6 is the intended full report, not current executable output.
@@ -764,10 +787,10 @@ For example, null encodes as `00`, present empty binary as `010000000000000000`,
 binary `aabb` as `010000000000000002aabb`. Adjacent variable-width fields cannot alias. Golden
 primitive and logs-row vectors are in `crates/legacy-format/src/canonical.rs` and `logs.rs`.
 The implementation supports these primitives and all columns of `headers`, `transactions`,
-`logs` and `withdrawals`. Transaction parity normalization and raw-envelope exclusion are
-specified above; transaction envelope semantics remain unchecked. Receipt and trace codecs,
-including trace enum mappings/order, remain to be implemented and tested before their producers
-can claim conformance.
+`receipts`, `logs` and `withdrawals`. Transaction parity normalization and raw-envelope exclusion are
+specified above; transaction envelope semantics remain unchecked. The trace codec, including
+trace enum mappings/order, remains to be implemented and tested before its producers can
+claim conformance.
 
 ### 11.2 Reorgs at the seal boundary
 
