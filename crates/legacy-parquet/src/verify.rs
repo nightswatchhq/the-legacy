@@ -12,15 +12,15 @@ pub enum DecodedChecks {
     /// Schema, row order, content hash, decoded count and block bounds all passed.
     Passed,
     /// Decoded checks plus complete header coverage, stored parent links and manifest boundaries.
-    /// This does not reconstruct or authenticate block hashes.
-    HeadersPassed,
+    /// Hash reconstruction is separately reported for the supported chain profile.
+    HeadersPassed { hashes: bool },
     /// Only file bytes and Parquet metadata were checked; the table codec is not implemented.
     NotImplemented,
 }
 
 /// Check the same byte buffer for integrity, footer counts, and supported table contents.
 /// Only header row coverage is checked; other-table completeness, finality, trie roots and
-/// checkpoint trust are not. Stored header hashes are not reconstructed here.
+/// checkpoint trust are not. Only chain ID 1 uses the Ethereum through-Prague hash profile.
 pub fn verify_file(bytes: Bytes, entry: &FileEntry, manifest: &Manifest) -> Result<DecodedChecks> {
     let range = manifest.block_range;
     let bad = |message: &str| Error::Verification(format!("{}: {message}", entry.name));
@@ -57,6 +57,11 @@ pub fn verify_file(bytes: Bytes, entry: &FileEntry, manifest: &Manifest) -> Resu
         Table::Headers => {
             let rows = crate::headers::read_headers(bytes)?;
             legacy_format::headers::verify_relic_rows(&rows, range, manifest.boundary)?;
+            if manifest.chain_id == 1 {
+                for row in &rows {
+                    legacy_format::ethereum::verify_header(row).map_err(|e| bad(&e.to_string()))?;
+                }
+            }
             (
                 legacy_format::headers::content_hash(&rows)?,
                 rows.len(),
@@ -91,7 +96,9 @@ pub fn verify_file(bytes: Bytes, entry: &FileEntry, manifest: &Manifest) -> Resu
         return Err(bad("decoded block number is outside the relic range"));
     }
     Ok(if entry.table == Table::Headers {
-        DecodedChecks::HeadersPassed
+        DecodedChecks::HeadersPassed {
+            hashes: manifest.chain_id == 1,
+        }
     } else {
         DecodedChecks::Passed
     })

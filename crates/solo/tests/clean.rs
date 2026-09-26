@@ -581,3 +581,51 @@ fn a_non_header_file_cannot_masquerade_as_headers_even_with_matching_hashes() {
     );
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn reconstructs_headers_and_rejects_resealed_field_tampering() {
+    let dir = scratch("ethereum-hashes");
+    let paths = write_local_chain(&dir, 1);
+    let path = &paths[0];
+    let mut rows = header_rows(0);
+    let mut parent = [0; 32];
+    for row in &mut rows {
+        row.parent_hash = parent;
+        row.block_hash = legacy_format::ethereum::header_hash(row).unwrap();
+        parent = row.block_hash;
+    }
+    let (bytes, entry) = legacy_parquet::headers::write_headers(&rows).unwrap();
+    std::fs::write(path.parent().unwrap().join(&entry.name), bytes).unwrap();
+    reseal_first(path, |m| {
+        m.chain_id = 1; // Synthetic preimages exercising this profile, not mainnet history.
+        m.files = vec![entry];
+        m.boundary.start_block_hash = Hash32::new(rows[0].block_hash);
+        m.boundary.end_block_hash = Hash32::new(rows.last().unwrap().block_hash);
+        m.boundary.parent_hash_of_start = Hash32::ZERO;
+    });
+    let out = solo(&[path], &["--files", "--json"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(report["checks"]["header_hashes"], "pass");
+    assert_eq!(report["checks"]["header_linkage"], "pass");
+    assert_eq!(report["files"][0]["checks"]["header_hashes"], "pass");
+    for check in ["checkpoint_anchor", "consensus_rules", "finality"] {
+        assert!(report["checks"][check]
+            .as_str()
+            .unwrap()
+            .starts_with("not checked"));
+    }
+    rows[4000].gas_used += 1;
+    let (bytes, entry) = legacy_parquet::headers::write_headers(&rows).unwrap();
+    std::fs::write(path.parent().unwrap().join(&entry.name), bytes).unwrap();
+    reseal_first(path, |m| m.files = vec![entry]);
+    assert_failed(
+        &solo(&[path], &["--files", "--json"]),
+        "block 4000: reconstructed Ethereum header hash",
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}

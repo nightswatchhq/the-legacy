@@ -11,6 +11,7 @@
 
 pub mod canonical;
 pub mod error;
+pub mod ethereum;
 pub mod hash;
 pub mod headers;
 pub mod jcs;

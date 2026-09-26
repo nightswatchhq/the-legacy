@@ -643,13 +643,27 @@ printing a success report. Success is limited to the explicitly reported checks.
 
 Headers additionally check complete block coverage, stored parent links and manifest boundary
 agreement. These are reported as `header_coverage`, `stored_header_linkage` and
-`manifest_boundary`. `header_hashes` and authenticated `header_linkage` remain **not checked**:
-no RLP/Keccak reconstruction or checkpoint authentication has been implemented. Hash-consistent
-synthetic header columns can therefore pass the stored checks without representing a real chain.
+`manifest_boundary`. For chain ID 1, the cleaner also reconstructs Ethereum header RLP and
+requires its Keccak-256 digest to equal `block_hash`. The supported layouts are pre-London (15
+fields), London (16), Shanghai (17), Cancun (20) and Prague (21). Optional extensions must be a
+contiguous prefix; the three Cancun fields must occur together. `block_hash` and
+`total_difficulty` are not part of the preimage. Non-minimal uint256 values are rejected,
+including leading-zero magnitudes; integer zero is empty, while the nonce remains eight bytes.
+The field order follows [EIP-4788](https://eips.ethereum.org/EIPS/eip-4788) with the
+[EIP-7685](https://eips.ethereum.org/EIPS/eip-7685) requests hash appended for Prague.
+
+`header_hashes` and `header_linkage` report **pass** only for requested files checked with this
+profile. Other chain IDs report **not checked (unsupported chain header profile)**. The generic
+row codec retains its chain-neutral rules. Future header fields beyond the v1 schema are not
+supported. Layout is selected by field presence, not by the mainnet fork activation schedule;
+`consensus_rules` explicitly reports that schedule and other consensus rules as unchecked.
+Hash reconstruction proves consistency of these preimages and their links, not that they belong
+to Ethereum's canonical chain. A synthetic hash-consistent chain still passes without a trusted
+checkpoint, era1 accumulator or finality check.
 
 `--after <manifest>` provides predecessor pact context for a continuation. Its table files are
 not checked unless they are part of the requested manifest run. The report names that scope.
-Other table completeness, reconstructed header hashes/linkage, transaction/receipt/withdrawal roots, era1
+Other table completeness, consensus rules, transaction/receipt/withdrawal roots, era1
 accumulators, finality, index correctness, producer signatures and checkpoint anchoring remain
 unimplemented. The example in §10.6 is the intended full report, not current executable output.
 The current file checker holds a file and decoded rows in memory and is not a streaming scanner.

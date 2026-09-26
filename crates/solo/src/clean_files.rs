@@ -29,6 +29,7 @@ pub struct FileChecks {
     pub block_range: &'static str,
     pub header_coverage: &'static str,
     pub stored_header_linkage: &'static str,
+    pub header_hashes: &'static str,
     pub manifest_boundary: &'static str,
 }
 
@@ -85,7 +86,7 @@ pub fn check(
             let decoded = verify_file(bytes.into(), entry, manifest)
                 .map_err(|e| format!("{}: {e}", file_path.display()))?;
             let table_status = match decoded {
-                DecodedChecks::Passed | DecodedChecks::HeadersPassed => PASS,
+                DecodedChecks::Passed | DecodedChecks::HeadersPassed { .. } => PASS,
                 DecodedChecks::NotImplemented => NO_CODEC,
             };
             reports.push(FileReport {
@@ -93,6 +94,13 @@ pub fn check(
                 name: entry.name.clone(),
                 table: entry.table,
                 checks: FileChecks {
+                    header_hashes: match decoded {
+                        DecodedChecks::HeadersPassed { hashes: true } => PASS,
+                        DecodedChecks::HeadersPassed { hashes: false } => {
+                            "not checked (unsupported chain header profile)"
+                        }
+                        _ => "n/a (not headers)",
+                    },
                     byte_size: PASS,
                     blake3: PASS,
                     parquet_counts: PASS,
@@ -101,17 +109,18 @@ pub fn check(
                     content_hash: table_status,
                     decoded_row_count: table_status,
                     block_range: table_status,
-                    header_coverage: if decoded == DecodedChecks::HeadersPassed {
+                    header_coverage: if matches!(decoded, DecodedChecks::HeadersPassed { .. }) {
                         PASS
                     } else {
                         "n/a (not headers)"
                     },
-                    stored_header_linkage: if decoded == DecodedChecks::HeadersPassed {
+                    stored_header_linkage: if matches!(decoded, DecodedChecks::HeadersPassed { .. })
+                    {
                         PASS
                     } else {
                         "n/a (not headers)"
                     },
-                    manifest_boundary: if decoded == DecodedChecks::HeadersPassed {
+                    manifest_boundary: if matches!(decoded, DecodedChecks::HeadersPassed { .. }) {
                         PASS
                     } else {
                         "n/a (not headers)"

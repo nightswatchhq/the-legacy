@@ -138,6 +138,17 @@ fn clean(
     } else {
         "partial (see per-file checks; some table codecs not implemented)"
     };
+    let header_hash_status = if !files {
+        "not checked (no relic data read)"
+    } else if file_reports
+        .iter()
+        .filter(|r| r.table == legacy_format::Table::Headers)
+        .all(|r| r.checks.header_hashes == "pass")
+    {
+        "pass"
+    } else {
+        "not checked (unsupported chain header profile)"
+    };
     let traces = manifests
         .iter()
         .filter(|m| m.has_unverifiable_tier())
@@ -162,8 +173,9 @@ fn clean(
                 "header_coverage": byte_status,
                 "stored_header_linkage": byte_status,
                 "manifest_boundary": byte_status,
-                "header_hashes": "not checked (RLP/Keccak reconstruction not implemented)",
-                "header_linkage": "not checked (stored hashes have not been reconstructed)",
+                "header_hashes": header_hash_status,
+                "header_linkage": header_hash_status,
+                "consensus_rules": "not checked (including fork activation schedule)",
                 "table_completeness": "not checked (not implemented)",
                 "producer_signatures": "not checked (not implemented)",
                 "era1_accumulator": "not checked (not implemented)",
@@ -209,7 +221,8 @@ fn clean(
         } else {
             println!("NOT checked file sizes, file hashes, Parquet metadata or table contents");
         }
-        println!("NOT checked other table completeness, reconstructed header hashes/linkage, transactions/receipts/withdrawals roots, checkpoint anchor, producer signatures");
+        println!("header hashes/linkage: {header_hash_status} (Ethereum layout through Prague; requested files only)");
+        println!("NOT checked consensus rules/fork schedule, other table completeness, transactions/receipts/withdrawals roots, checkpoint anchor, producer signatures");
         println!("NOT checked era1 accumulator, finality, index sidecars");
         println!("scope       requested manifests only; --after supplies predecessor context, not verified file coverage");
         if traces > 0 {
