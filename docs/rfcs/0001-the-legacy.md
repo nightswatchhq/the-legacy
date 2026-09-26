@@ -650,6 +650,15 @@ For post-Shapella blocks (EIP-4895), rebuild the withdrawals trie identically -
 root … by inserting each withdrawal into a Merkle-Patricia trie keyed by index" - and compare
 against `headers.withdrawals_root`. Withdrawals live in the per-relic `withdrawals` table (§6.7).
 
+For chain ID 1, the current cleaner encodes each value as
+`RLP([global_index, validator_index, address, amount])` and uses its zero-based position within
+the block as the ordered trie key. The global index is therefore never mistaken for the key.
+It requires headers and withdrawals, compares each header with a `withdrawals_root` against the
+rebuilt root, and rejects supplied withdrawals under a header that has no root. Empty
+post-Shapella blocks use the Ethereum empty trie root. It does not apply a fork schedule, prove
+table completeness or authenticate the header. Missing tables report **not checked** and other
+chains report an unsupported withdrawal profile.
+
 ### 10.4 Blob transactions (EIP-4844)
 
 Blob transactions (type 0x03) are stored in **canonical form** - the `tx_payload_body` fields plus
@@ -746,10 +755,11 @@ Transaction envelope semantics (including raw/structured agreement and transacti
 signature validity/sender recovery are separately reported as **not checked**. Receipt fees
 and other derived fields still report **not checked** under `receipt_consistency`.
 Execution gas accounting has its own `receipt_gas` result.
-Other table completeness, consensus rules, withdrawal roots, era1 accumulators, finality, index
-correctness, producer signatures and checkpoint anchoring remain unimplemented. Transaction-root
-checking currently requires raw envelopes, and receipt-root checking has the chain ID 1 profile
-described above. The example in §10.6 is the intended full report, not current executable output.
+Other table completeness, consensus rules, era1 accumulators, finality, index correctness,
+producer signatures and checkpoint anchoring remain unimplemented. Transaction-root checking
+currently requires raw envelopes, and receipt and withdrawal-root checking have the chain ID 1
+profiles described above. The example in §10.6 is the intended full report, not current executable
+output.
 After the file checks, the cleaner compares available tables within each requested relic:
 
 - `transaction_receipt_links`: transactions and receipts must have equal row counts and match

@@ -25,6 +25,7 @@ pub enum VerifiedRows {
     Transactions(Vec<legacy_format::transactions::TransactionRow>),
     Receipts(Vec<legacy_format::receipts::ReceiptRow>),
     Logs(Vec<legacy_format::logs::LogRow>),
+    Withdrawals(Vec<legacy_format::withdrawals::WithdrawalRow>),
     Other,
 }
 
@@ -120,8 +121,8 @@ pub fn verify_file_with_rows(
             (
                 legacy_format::withdrawals::content_hash(&rows)?,
                 rows.len(),
-                rows.iter().all(|r| range.contains(r.block_number)),
-                VerifiedRows::Other,
+                rows.iter().all(|row| range.contains(row.block_number)),
+                VerifiedRows::Withdrawals(rows),
             )
         }
         _ => return Ok((DecodedChecks::NotImplemented, VerifiedRows::Other)),

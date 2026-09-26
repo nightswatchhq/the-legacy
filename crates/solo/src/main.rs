@@ -134,6 +134,7 @@ fn clean(
     let receipt_gas = clean_files::summarize(&local_report.relics, |r| r.receipt_gas);
     let transactions_root = clean_files::summarize(&local_report.relics, |r| r.transactions_root);
     let receipts_root = clean_files::summarize(&local_report.relics, |r| r.receipts_root);
+    let withdrawals_root = clean_files::summarize(&local_report.relics, |r| r.withdrawals_root);
     let byte_status = if files {
         "pass"
     } else {
@@ -202,7 +203,7 @@ fn clean(
                 "receipt_gas": receipt_gas,
                 "header_blooms": header_blooms,
                 "receipts_root": receipts_root,
-                "withdrawals_root": "not checked (not implemented)",
+                "withdrawals_root": withdrawals_root,
                 "checkpoint_anchor": "not checked (not implemented)",
                 "traces": if traces > 0 {
                     "unverifiable (not header-committed)"
@@ -242,7 +243,7 @@ fn clean(
             println!("NOT checked file sizes, file hashes, Parquet metadata or table contents");
         }
         println!("header hashes/linkage: {header_hash_status} (Ethereum layout through Prague; requested files only)");
-        println!("NOT checked consensus rules/fork schedule, other table completeness, withdrawals roots, checkpoint anchor, producer signatures");
+        println!("NOT checked consensus rules/fork schedule, other table completeness, checkpoint anchor, producer signatures");
         println!("transaction trie roots: {transactions_root}");
         for relic in &local_report.relics {
             println!(
@@ -289,6 +290,13 @@ fn clean(
             println!(
                 "relic {} receipt trie roots: {}",
                 relic.relic_index, relic.receipts_root
+            );
+        }
+        println!("withdrawal trie roots: {withdrawals_root}");
+        for relic in &local_report.relics {
+            println!(
+                "relic {} withdrawal trie roots: {}",
+                relic.relic_index, relic.withdrawals_root
             );
         }
         println!("NOT checked receipt fees or other derived fields");

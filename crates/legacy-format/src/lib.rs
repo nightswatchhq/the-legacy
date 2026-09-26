@@ -16,6 +16,7 @@ pub mod error;
 pub mod ethereum;
 pub mod ethereum_receipts;
 pub mod ethereum_transactions;
+pub mod ethereum_withdrawals;
 pub mod hash;
 pub mod headers;
 pub mod jcs;

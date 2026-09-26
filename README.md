@@ -19,7 +19,7 @@ manifest. Manifests chain into a **pact**, one root hash per chain per height, s
 compare their entire corpus in a single 32-byte exchange and localise any disagreement in O(log n)
 requests. Nothing in it privileges the producer: every file is content-addressed and every
 sidecar is rebuildable. The current cleaner rebuilds transaction and receipt tries for its chain
-ID 1 profile; withdrawal roots remain future work.
+ID 1 profile.
 
 **Read [RFC-0001](docs/rfcs/0001-the-legacy.md) first.** It is the specification; this repository is
 its implementation. [RFC-0002](docs/rfcs/0002-the-backfill-layer.md) is the follow-up draft for
@@ -41,7 +41,8 @@ anything yet.** Precisely:
 | Ethereum receipt trie-leaf encoding | implemented for legacy and types 1..=4; independent synthetic vectors |
 | Ethereum transaction trie roots | chain ID 1 local cleaner check from stored raw envelopes |
 | Ethereum receipts trie roots | chain ID 1 local cleaner check; header trust remains separate |
-| Withdrawals trie roots, checkpoint anchoring | not started |
+| Ethereum withdrawal trie roots | chain ID 1 local cleaner check for EIP-4895 rows |
+| Checkpoint anchoring | not started |
 | `solo serve`, all six Shadow sources | not started |
 
 `solo clean` says out loud which checks it performed and which it did not, and will keep doing so
@@ -54,8 +55,8 @@ content hash, decoded count and block bounds. Headers must cover every block in 
 relic, have consistent stored parent links, and match the manifest boundaries. For chain ID 1,
 it also reconstructs RLP/Keccak header hashes using Ethereum layouts through Prague; other chain
 profiles remain unchecked. Hash-consistent synthetic chains can still pass. Consensus rules
-(including fork activation), other table contents, withdrawal roots, finality and checkpoint
-trust remain explicitly unchecked. Transaction field agreement, signatures and sender recovery
+(including fork activation), other table contents, finality and checkpoint trust remain explicitly
+unchecked. Transaction field agreement, signatures and sender recovery
 also remain unchecked, as do fees and other derived fields.
 When the relevant tables are present, the cleaner matches transaction/receipt keys, hashes and
 types, each log's transaction and receipt references, and receipt blooms rebuilt from log
@@ -71,6 +72,8 @@ legacy or types 1 through 4 envelopes, checks each envelope's Keccak hash, and c
 with the header. With headers, receipts and logs present, it also rebuilds the receipt trie. These
 checks prove agreement among supplied bytes, not canonical-chain membership, field agreement or
 table completeness.
+With headers and withdrawals present, it rebuilds EIP-4895 withdrawal tries, using a withdrawal's
+position in the block as the trie key and its global index as part of the RLP value.
 
 ## Try it
 

@@ -50,6 +50,7 @@ pub struct RelicReport {
     pub receipt_gas: &'static str,
     pub transactions_root: &'static str,
     pub receipts_root: &'static str,
+    pub withdrawals_root: &'static str,
 }
 
 pub fn summarize(
@@ -88,6 +89,7 @@ pub fn check(
         let mut transactions = None;
         let mut receipts = None;
         let mut logs = None;
+        let mut withdrawals = None;
         for entry in &manifest.files {
             // Keep the path invariant here too: this module must remain safe if a future caller
             // forgets the manifest-validation step.
@@ -129,6 +131,7 @@ pub fn check(
                 VerifiedRows::Transactions(rows) => transactions = Some(rows),
                 VerifiedRows::Receipts(rows) => receipts = Some(rows),
                 VerifiedRows::Logs(rows) => logs = Some(rows),
+                VerifiedRows::Withdrawals(rows) => withdrawals = Some(rows),
                 VerifiedRows::Other => {}
             }
             let table_status = match decoded {
@@ -186,6 +189,11 @@ pub fn check(
             } else {
                 "not checked (unsupported chain receipt profile)"
             },
+            withdrawals_root: if manifest.chain_id == 1 {
+                "not checked (headers or withdrawals absent)"
+            } else {
+                "not checked (unsupported chain withdrawal profile)"
+            },
             transaction_receipt_links: "not checked (transactions or receipts absent)",
             log_transaction_links: "not checked (logs or transactions absent)",
             log_receipt_links: "not checked (logs or receipts absent)",
@@ -234,6 +242,11 @@ pub fn check(
                 legacy_format::ethereum_receipts::verify_receipt_roots(headers, receipts, logs)
                     .map_err(|error| format!("relic {}: {error}", manifest.relic_index()))?;
                 relational.receipts_root = PASS;
+            }
+            if let (Some(headers), Some(withdrawals)) = (&headers, &withdrawals) {
+                legacy_format::ethereum_withdrawals::verify_withdrawal_roots(headers, withdrawals)
+                    .map_err(|error| format!("relic {}: {error}", manifest.relic_index()))?;
+                relational.withdrawals_root = PASS;
             }
         }
         reports.relics.push(relational);

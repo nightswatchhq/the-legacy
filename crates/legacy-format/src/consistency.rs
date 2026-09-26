@@ -21,6 +21,8 @@ pub enum ConsistencyError {
     Receipts(#[from] crate::receipts::ReceiptError),
     #[error(transparent)]
     Logs(#[from] crate::logs::LogError),
+    #[error(transparent)]
+    Withdrawals(#[from] crate::withdrawals::WithdrawalError),
     #[error("transaction and receipt row counts differ")]
     Count,
     #[error("receipt bloom differs from supplied logs at block {0}, transaction {1}")]

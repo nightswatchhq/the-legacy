@@ -1115,6 +1115,12 @@ fn ethereum_gas_accounting_detects_resealed_lies_and_skips_unknown_chains() {
             .into(),
     )
     .unwrap();
+    let withdrawals = legacy_parquet::withdrawals::read_withdrawals(
+        std::fs::read(directory.join("withdrawals.parquet"))
+            .unwrap()
+            .into(),
+    )
+    .unwrap();
     let log_file = directory.join("logs.parquet");
     let log_bytes = std::fs::read(&log_file).unwrap();
     let logs = legacy_parquet::logs::read_logs(log_bytes.clone().into()).unwrap();
@@ -1130,6 +1136,11 @@ fn ethereum_gas_accounting_detects_resealed_lies_and_skips_unknown_chains() {
         } else {
             legacy_format::ethereum_receipts::receipt_root(h.block_number, &[], &[]).unwrap()
         };
+        h.withdrawals_root = Some(if h.block_number == 2 {
+            legacy_format::ethereum_withdrawals::withdrawal_root(2, &withdrawals).unwrap()
+        } else {
+            legacy_format::ethereum_withdrawals::withdrawal_root(h.block_number, &[]).unwrap()
+        });
         h.parent_hash = parent;
         h.block_hash = legacy_format::ethereum::header_hash(h).unwrap();
         parent = h.block_hash;
@@ -1154,10 +1165,39 @@ fn ethereum_gas_accounting_detects_resealed_lies_and_skips_unknown_chains() {
     assert_eq!(report["relic_checks"][0]["receipt_gas"], "pass");
     assert_eq!(report["checks"]["receipts_root"], "pass");
     assert_eq!(report["checks"]["transactions_root"], "pass");
+    assert_eq!(report["checks"]["withdrawals_root"], "pass");
     assert!(report["checks"]["checkpoint_anchor"]
         .as_str()
         .unwrap()
         .starts_with("not checked"));
+    let withdrawal_file = directory.join("withdrawals.parquet");
+    let mut changed_withdrawals = withdrawals.clone();
+    changed_withdrawals[0].amount += 1;
+    let (bytes, entry) =
+        legacy_parquet::withdrawals::write_withdrawals(&changed_withdrawals).unwrap();
+    std::fs::write(&withdrawal_file, bytes).unwrap();
+    reseal_first(path, |m| {
+        let target = m
+            .files
+            .iter_mut()
+            .find(|f| f.table == Table::Withdrawals)
+            .unwrap();
+        *target = entry;
+    });
+    assert_failed(
+        &solo(&[path], &["--files", "--json"]),
+        "reconstructed withdrawal root differs from header at block 2",
+    );
+    let (bytes, entry) = legacy_parquet::withdrawals::write_withdrawals(&withdrawals).unwrap();
+    std::fs::write(&withdrawal_file, bytes).unwrap();
+    reseal_first(path, |m| {
+        let target = m
+            .files
+            .iter_mut()
+            .find(|f| f.table == Table::Withdrawals)
+            .unwrap();
+        *target = entry;
+    });
     let transaction_file = directory.join("transactions.parquet");
     let mut changed_transactions = transactions.clone();
     changed_transactions[0].raw_envelope = Some(vec![2, 0xc1, 0]);
