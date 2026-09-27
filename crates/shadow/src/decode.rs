@@ -212,7 +212,6 @@ fn legacy_transaction(
     let r = scalar(fields[7])?;
     let s = scalar(fields[8])?;
     let sighash = keccak(&signing_list(&fields[..6], chain_id)?);
-    // Pre-EIP-2 signatures are high-s. Era1 reaches back to genesis, so recovery must accept them.
     let recovery_id = if parity >= 27 { parity - 27 } else { parity };
     let from = recover(&sighash, recovery_id, r, s)?;
     let stored_parity = if chain_id.is_none() {
@@ -598,8 +597,15 @@ fn recover(
     r: [u8; 32],
     s: [u8; 32],
 ) -> Result<[u8; 20], DecodeError> {
-    let signature = Signature::from_scalars(r, s)
+    let mut signature = Signature::from_scalars(r, s)
         .map_err(|_| DecodeError::Signature("r or s is not a usable secp256k1 scalar".into()))?;
+    // k256's recover path rejects a high s. Pre-EIP-2 signatures are high-s, so fold s
+    // and flip the id here; the row keeps the original s and v.
+    let mut parity = parity;
+    if let Some(low_s) = signature.normalize_s() {
+        signature = low_s;
+        parity ^= 1;
+    }
     let id = RecoveryId::try_from(parity)
         .map_err(|_| DecodeError::Signature("recovery id is not 0 or 1".into()))?;
     let key = VerifyingKey::recover_from_prehash(sighash, &signature, id)

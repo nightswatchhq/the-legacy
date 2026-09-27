@@ -807,4 +807,78 @@ mod tests {
         )
         .unwrap();
     }
+
+    #[test]
+    fn high_s_legacy_signature_recovers_the_signer() {
+        use k256::ecdsa::SigningKey;
+
+        let secret = [0x42u8; 32];
+        let key = SigningKey::from_bytes((&secret).into()).unwrap();
+        let point = key.verifying_key().to_encoded_point(false);
+        let sender_hash = keccak(&point.as_bytes()[1..]);
+        let mut sender = [0u8; 20];
+        sender.copy_from_slice(&sender_hash[12..]);
+
+        let nonce = rlp_u64(0);
+        let gas_price = rlp_u64(1);
+        let gas = rlp_u64(21_000);
+        let to = rlp_bytes(&[0x22; 20]);
+        let value = rlp_u64(0);
+        let data = rlp_bytes(&[]);
+        let sighash = keccak(&list_bytes(&[
+            nonce.as_slice(),
+            gas_price.as_slice(),
+            gas.as_slice(),
+            to.as_slice(),
+            value.as_slice(),
+            data.as_slice(),
+        ]));
+        let (signature, id) = key.sign_prehash_recoverable(&sighash).unwrap();
+        assert!(signature.normalize_s().is_none());
+        let compact = signature.to_bytes();
+        let mut r_raw = [0u8; 32];
+        r_raw.copy_from_slice(&compact[..32]);
+        let high = -signature.s();
+        let mut s_raw = [0u8; 32];
+        s_raw.copy_from_slice(high.as_ref().to_bytes().as_slice());
+        let r = rlp_bytes(trim_zeros(&r_raw));
+        let s = rlp_bytes(trim_zeros(&s_raw));
+        let flipped = id.to_byte() ^ 1;
+        let v = rlp_u64(u64::from(27 + flipped));
+        let raw = list_bytes(&[
+            nonce.as_slice(),
+            gas_price.as_slice(),
+            gas.as_slice(),
+            to.as_slice(),
+            value.as_slice(),
+            data.as_slice(),
+            v.as_slice(),
+            r.as_slice(),
+            s.as_slice(),
+        ]);
+        let logs = list_bytes(&[]);
+        let receipt = list_bytes(&[
+            rlp_u64(1).as_slice(),
+            rlp_u64(21_000).as_slice(),
+            rlp_bytes(&[0u8; 256]).as_slice(),
+            logs.as_slice(),
+        ]);
+        let receipts = list_bytes(&[receipt.as_slice()]);
+        let mut header = empty_header(1, [0x55; 32], None);
+        header.gas_used = 21_000;
+        header.block_hash = header_hash(&header).unwrap();
+        let body = list_bytes(&[list_bytes(&[raw.as_slice()]).as_slice(), &[0xc0][..]]);
+
+        let decoded = decode::decode_block(
+            &header_rlp(&header).unwrap(),
+            &body,
+            &receipts,
+            &difficulty_le(1),
+            1,
+        )
+        .unwrap();
+        assert_eq!(decoded.transactions[0].from, sender);
+        assert_eq!(decoded.transactions[0].s, Some(s_raw));
+        assert_eq!(decoded.transactions[0].v_or_y_parity, Some(27u8 + flipped));
+    }
 }
