@@ -1,6 +1,8 @@
 //! JSON-RPC over one admitted corpus.
 //!
-//! Block hashes and transaction hashes are found by reading the relic files. There is no sidecar.
+//! Block hashes and transaction hashes are resolved through in-memory indexes built at admit
+//! time. A hit still reads that relic's table and checks the stored hash. The indexes are not
+//! in the manifest.
 //! `uncles` is an empty array only when `sha3Uncles` is the empty-list hash. Otherwise it is null:
 //! uncle headers are not stored, and an empty array would be a claim we cannot make.
 //! A logs range that passes the sealed head is rejected whole. Nothing is truncated.
@@ -18,6 +20,7 @@ use sha3::{Digest, Keccak256};
 
 use crate::clean_files::{self, LocalReport};
 use crate::config::{Config, Limits};
+use crate::hash_index::{BlockHashIndex, TxHashIndex};
 use crate::log_index::LogIndex;
 
 /// Ethereum's empty Merkle Patricia trie root.
@@ -31,6 +34,17 @@ pub struct Snapshot {
     limits: Limits,
     report: Option<LocalReport>,
     logs: Vec<RelicLogs>,
+    block_hashes: Vec<RelicBlockHashes>,
+    /// `None` when any relic could not be indexed, in which case lookups scan.
+    tx_hashes: Option<Vec<RelicTxHashes>>,
+}
+
+struct RelicBlockHashes {
+    index: BlockHashIndex,
+}
+
+struct RelicTxHashes {
+    index: TxHashIndex,
 }
 
 struct RelicLogs {
@@ -46,6 +60,8 @@ impl Snapshot {
                 limits: config.limits.clone(),
                 report: None,
                 logs: Vec::new(),
+                block_hashes: Vec::new(),
+                tx_hashes: None,
             });
         }
         let corpus = Corpus::open_local(&config.manifests)?;
@@ -60,11 +76,63 @@ impl Snapshot {
                 index,
             });
         }
+        let spans: Vec<_> = corpus
+            .manifests()
+            .map(|manifest| {
+                (
+                    manifest.relic_index(),
+                    manifest.block_range.start,
+                    manifest.block_range.end,
+                )
+            })
+            .collect();
+        let mut block_hashes = Vec::new();
+        let mut tx_hashes = Vec::new();
+        let mut tx_complete = true;
+        for (relic, start, end) in spans {
+            let headers = corpus.headers(start..=end)?;
+            let block_rows: Vec<_> = headers
+                .iter()
+                .map(|header| (header.block_hash, header.block_number))
+                .collect();
+            block_hashes.push(RelicBlockHashes {
+                index: BlockHashIndex::build(&block_rows)
+                    .map_err(|error| format!("relic {relic} block hash index: {error}"))?,
+            });
+            match corpus.transactions(start..=end) {
+                Ok(transactions) => {
+                    let rows: Vec<_> = transactions
+                        .iter()
+                        .map(|tx| (tx.transaction_hash, tx.block_number, tx.transaction_index))
+                        .collect();
+                    tx_hashes.push(RelicTxHashes {
+                        index: TxHashIndex::build(&rows).map_err(|error| {
+                            format!("relic {relic} transaction hash index: {error}")
+                        })?,
+                    });
+                }
+                Err(legacy_reader::Error::MissingTable { .. })
+                    if headers
+                        .iter()
+                        .all(|header| header.transactions_root == EMPTY_TRIE_ROOT) =>
+                {
+                    tx_hashes.push(RelicTxHashes {
+                        index: TxHashIndex::build(&[]).map_err(|error| {
+                            format!("relic {relic} transaction hash index: {error}")
+                        })?,
+                    });
+                }
+                Err(legacy_reader::Error::MissingTable { .. }) => tx_complete = false,
+                Err(error) => return Err(error.into()),
+            }
+        }
         Ok(Self {
             corpus: Some(corpus),
             limits: config.limits.clone(),
             report: Some(report),
             logs,
+            block_hashes,
+            tx_hashes: tx_complete.then_some(tx_hashes),
         })
     }
 
@@ -915,7 +983,7 @@ fn capabilities(snapshot: &Snapshot) -> Value {
             "batch_max": snapshot.limits.batch_max,
         },
         "tables": guaranteed_tables(snapshot),
-        "sidecars": log_sidecars(snapshot),
+        "sidecars": sidecars(snapshot),
         "cleaning": {
             "manifest_structure": snapshot.report.is_some(),
             "relic_linkage": snapshot.report.is_some(),
@@ -928,6 +996,18 @@ fn capabilities(snapshot: &Snapshot) -> Value {
         },
         "mirrors": [],
     })
+}
+
+fn sidecars(snapshot: &Snapshot) -> Vec<&'static str> {
+    let mut names = log_sidecars(snapshot);
+    if !snapshot.block_hashes.is_empty() {
+        names.push("blockhash");
+    }
+    if snapshot.tx_hashes.is_some() {
+        names.push("txhash");
+    }
+    names.sort_unstable();
+    names
 }
 
 fn log_sidecars(snapshot: &Snapshot) -> Vec<&'static str> {
@@ -1115,20 +1195,63 @@ fn find_header_by_hash(
     snapshot: &Snapshot,
     hash: &[u8; 32],
 ) -> Result<Option<HeaderRow>, RpcError> {
-    let head = snapshot.head().ok_or_else(unavailable)?;
-    let headers = rows(snapshot.corpus()?.headers(0..=head))?;
-    Ok(headers
-        .into_iter()
-        .find(|header| header.block_hash == *hash))
+    snapshot.head().ok_or_else(unavailable)?;
+    for index in &snapshot.block_hashes {
+        let Some(number) = index.index.find(hash) else {
+            continue;
+        };
+        let Some(header) = header_at(snapshot, number)? else {
+            return Err(failed(
+                "the-legacy: block hash index pointed at a missing header",
+            ));
+        };
+        if header.block_hash != *hash {
+            return Err(failed(
+                "the-legacy: block hash index pointed at a different header",
+            ));
+        }
+        return Ok(Some(header));
+    }
+    Ok(None)
 }
 
 fn find_transaction(
     snapshot: &Snapshot,
     hash: &[u8; 32],
 ) -> Result<Option<(HeaderRow, TransactionRow)>, RpcError> {
+    snapshot.head().ok_or_else(unavailable)?;
+    let Some(indexes) = &snapshot.tx_hashes else {
+        return find_transaction_scan(snapshot, hash);
+    };
+    for index in indexes {
+        let Some((block, tx_index)) = index.index.find(hash) else {
+            continue;
+        };
+        let header = require_header(snapshot, block)?;
+        let Some(tx) = transactions_of(snapshot, &header)?
+            .into_iter()
+            .find(|tx| tx.transaction_index == tx_index)
+        else {
+            return Err(failed(
+                "the-legacy: transaction hash index pointed at a missing transaction",
+            ));
+        };
+        if tx.transaction_hash != *hash {
+            return Err(failed(
+                "the-legacy: transaction hash index pointed at a different transaction",
+            ));
+        }
+        return Ok(Some((header, tx)));
+    }
+    Ok(None)
+}
+
+fn find_transaction_scan(
+    snapshot: &Snapshot,
+    hash: &[u8; 32],
+) -> Result<Option<(HeaderRow, TransactionRow)>, RpcError> {
     let head = snapshot.head().ok_or_else(unavailable)?;
-    let corpus = snapshot.corpus()?;
-    let transactions = match corpus.transactions(0..=head) {
+    let transactions = match snapshot.corpus()?.transactions(0..=head) {
         Ok(rows) => rows,
         Err(legacy_reader::Error::MissingTable { .. }) => {
             return Err(failed(

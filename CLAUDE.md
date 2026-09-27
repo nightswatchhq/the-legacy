@@ -52,8 +52,8 @@ implementation-linked amendments, not already supported interfaces.
   into headers, transactions, receipts and logs. The other five sources are still skeleton.
 - `crates/solo` - serving (§13) and cleaning (§10). `solo serve` is sealed-only JSON-RPC over a
   local corpus: no upstream and no object storage. Log address and topic bitmaps are rebuilt in
-  memory from the logs file and are not sealed into the manifest. Checkpoint anchoring does not
-  exist.
+  memory from the admitted files, as are transaction-hash and block-hash indexes. None of
+  those indexes are sealed into the manifest. Checkpoint anchoring does not exist.
 
 ## Working
 

@@ -38,7 +38,8 @@ anything yet.** Precisely:
 | `solo clean` (manifest structure, relic linkage, pact chain) | implemented; `--files` adds local integrity checks |
 | Headers, transactions, receipts, logs and withdrawals Parquet codecs | implemented, local synthetic round trips; no sealer |
 | Log address/topic bitmaps | rebuilt in memory for `eth_getLogs`; not manifest-committed |
-| Traces Parquet codec, tx/block-hash sidecars | not started |
+| Tx and block hash indexes | in-memory sorted records plus a split-block bloom; not manifest-committed |
+| Traces Parquet codec | not started |
 | Ethereum receipt trie-leaf encoding | implemented for legacy and types 1..=4; independent synthetic vectors |
 | Ethereum transaction trie roots | chain ID 1 local cleaner check from stored raw envelopes |
 | Ethereum receipts trie roots | chain ID 1 local cleaner check; header trust remains separate |
@@ -135,7 +136,9 @@ Serve that directory. The process admits the corpus only after the same file che
 `solo clean --files`, then answers sealed history. There is no upstream. `latest`, `safe` and
 `finalized` are the sealed head. `eth_getLogs` uses in-memory address and topic bitmaps rebuilt from the logs file. Those bitmaps
 are not in the manifest. A topic hit still decodes the matching row groups, and the rows are
-checked again. Transaction and block hash lookups read whole relic files. A range above that
+checked again. A transaction or block hash is resolved through an in-memory sorted array and
+a split-block bloom, then that relic's row is read and the hash is checked. The indexes are
+not in the manifest. A range above that
 head, or past the configured log limits, is an error, not a shorter answer.
 
 ```toml

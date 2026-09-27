@@ -28,7 +28,7 @@ pub fn serve(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
     println!("{}", snapshot.checked_line());
     println!("{}", snapshot.not_checked_line());
     println!(
-        "note        log address and topic bitmaps are rebuilt in memory from the logs file and are not in the manifest; transaction and block hash lookups still read whole relic files"
+        "note        log bitmaps and hash indexes are rebuilt in memory and are not in the manifest; a hash hit still reads that relic and checks the stored hash"
     );
     let _ = std::io::stdout().flush();
 

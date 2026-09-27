@@ -17,6 +17,7 @@ legacy-format.workspace = true
 legacy-parquet.workspace = true
 legacy-reader.workspace = true
 alloy-rlp.workspace = true
+parquet.workspace = true
 clap.workspace = true
 hex.workspace = true
 serde.workspace = true

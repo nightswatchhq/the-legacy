@@ -224,7 +224,7 @@ fn sealed_only_serves_history_and_names_what_it_did_not_check() {
     assert_eq!(caps["result"]["sealed_head"], 8191);
     assert_eq!(
         caps["result"]["sidecars"],
-        serde_json::json!(["logs.addr", "logs.topics"])
+        serde_json::json!(["blockhash", "logs.addr", "logs.topics", "txhash"])
     );
     assert_eq!(caps["result"]["cleaning"]["file_hashes"], true);
     assert_eq!(caps["result"]["cleaning"]["transactions_root"], false);
