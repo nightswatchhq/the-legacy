@@ -448,7 +448,9 @@ now checks file integrity, those table codecs, header coverage and stored parent
 consistency, transaction/receipt/log references and receipt/header blooms where the required tables exist, plus
 RLP/Keccak header hash reconstruction for chain ID 1 using layouts through
 Prague and execution gas accounting for chain ID 1 (RFC-0001 §10.7). Other chain profiles, consensus rules and checkpoint trust remain
-unchecked. The native reader and its
+unchecked. When a manifest carries `era1_accumulator_root` and headers were read, `solo clean --files`
+recomputes that SSZ root from the stored block hashes and total difficulties; a missing root stays
+unchecked, and the comparison does not reconstruct header RLP or apply a merge schedule. The native reader and its
 policy API remain proposed. The following remain follow-ups.
 
 | RFC-0001 | Required amendment |

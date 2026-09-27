@@ -16,9 +16,14 @@ implementation-linked amendments, not already supported interfaces.
    reconstructs Ethereum header hashes through Prague for chain ID 1 only and checks transaction,
    receipt and log references plus receipt/header blooms where the required tables exist. Chain
    ID 1 also checks receipt/header execution gas accounting plus transaction and receipt trie
-   roots. Fees, other derived fields, other chain profiles, completeness,
+   roots. When a manifest carries an era1 accumulator root and headers were read, that
+   root is recomputed from the stored block hashes and total difficulties. A missing root
+   stays unchecked. The comparison does not reconstruct header RLP and does not decide
+   whether the range is pre-merge. Fees, other derived fields, other chain profiles, completeness,
    execution/fork validity and checkpoint trust remain
    unchecked; consistency is not chain trust.
+   `solo serve` admits a local corpus only after those file checks and repeats their result in
+   `legacy_capabilities`. It does not add trie, anchor or index checks of its own.
    This is the single most important rule in the repo: the whole project's
    value is that its claims are true.
 3. **Traces are not header-committed.** No cryptographic claim about the traces tier is acceptable
@@ -43,9 +48,12 @@ implementation-linked amendments, not already supported interfaces.
 - `crates/legacy-reader` - native local sealed-history reads. It currently re-verifies
   manifest-bound files before yielding core-table rows; object storage and indexed queries remain
   to be built.
-- `crates/shadow` - the six ingestion sources (§11). All skeleton so far.
-- `crates/solo` - serving (§13) and cleaning (§10). Manifest checks and optional local file checks
-  exist; serving and checkpoint anchoring do not.
+- `crates/shadow` - the six ingestion sources (§11). era1 seals one aligned 8192-block file
+  into headers, transactions, receipts and logs. The other five sources are still skeleton.
+- `crates/solo` - serving (§13) and cleaning (§10). `solo serve` is sealed-only JSON-RPC over a
+  local corpus: no upstream and no object storage. Log address and topic bitmaps are rebuilt in
+  memory from the logs file and are not sealed into the manifest. Checkpoint anchoring does not
+  exist.
 
 ## Working
 

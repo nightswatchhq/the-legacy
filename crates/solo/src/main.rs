@@ -1,8 +1,7 @@
 //! Solo: the serving binary.
 //!
-//! The finished article (RFC-0001 §13) is a splitting proxy - finalized reads answered from relics
-//! in object storage, the tip forwarded to a small pruned upstream node, historical-state calls
-//! rejected outright rather than answered wrongly. None of the serving exists yet.
+//! The finished article (RFC-0001 §13) is a splitting proxy. What exists is sealed-only JSON-RPC
+//! over a local corpus, with no upstream, and `solo clean`.
 //!
 //! `solo clean` recomputes the pact chain; `--files` adds local byte integrity and implemented
 //! table checks. Both say exactly which checks they did and did not perform. A
@@ -14,7 +13,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use legacy_format::{manifest::Manifest, pact, relic, SPEC_VERSION};
 
-mod clean_files;
+use solo::clean_files;
 
 #[derive(Parser)]
 #[command(
@@ -29,7 +28,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Serve finalized history over JSON-RPC. Not implemented yet.
+    /// Serve a local sealed corpus over JSON-RPC. No upstream.
     Serve {
         #[arg(long, default_value = "solo.toml")]
         config: PathBuf,
@@ -51,7 +50,8 @@ enum Command {
 
         /// Check local table files beside each manifest: bytes, footer counts, and implemented
         /// table codecs. Chain ID 1 also verifies available transaction, receipt and withdrawal
-        /// roots. Does not verify finality, signatures or checkpoint trust.
+        /// roots. A manifest that carries `era1_accumulator_root` is checked against header
+        /// hashes and total difficulties. Does not verify finality, signatures or checkpoint trust.
         #[arg(long)]
         files: bool,
     },
@@ -77,12 +77,7 @@ fn main() -> ExitCode {
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     match Cli::parse().command {
-        Command::Serve { config } => Err(format!(
-            "serving is not implemented yet (RFC-0001 §13; config would be {}). \
-             Until it is, point erpc or proxyd at a node.",
-            config.display()
-        )
-        .into()),
+        Command::Serve { config } => solo::serve(&config),
 
         Command::Relic { block, chain_id } => {
             let index = relic::relic_index(block);
@@ -136,6 +131,23 @@ fn clean(
     let transactions_root = clean_files::summarize(&local_report.relics, |r| r.transactions_root);
     let receipts_root = clean_files::summarize(&local_report.relics, |r| r.receipts_root);
     let withdrawals_root = clean_files::summarize(&local_report.relics, |r| r.withdrawals_root);
+    let era1_accumulator = if !files {
+        "not checked (no relic data read)"
+    } else {
+        let absent = "not checked (manifest has no era1_accumulator_root)";
+        let values: Vec<_> = local_report
+            .relics
+            .iter()
+            .map(|relic| relic.era1_accumulator)
+            .collect();
+        if values.iter().all(|status| *status == "pass") {
+            "pass"
+        } else if values.iter().all(|status| *status == absent) {
+            absent
+        } else {
+            clean_files::summarize(&local_report.relics, |relic| relic.era1_accumulator)
+        }
+    };
     let byte_status = if files {
         "pass"
     } else {
@@ -190,7 +202,7 @@ fn clean(
                 "consensus_rules": "not checked (including fork activation schedule)",
                 "table_completeness": "not checked (not implemented)",
                 "producer_signatures": "not checked (not implemented)",
-                "era1_accumulator": "not checked (not implemented)",
+                "era1_accumulator": era1_accumulator,
                 "finality": "not checked (not implemented)",
                 "index_sidecars": "not checked (not implemented)",
                 "transaction_envelopes": "not checked (field RLP semantics and raw/structured agreement not implemented; see transactions_root for raw envelope profile/hash)",
@@ -301,7 +313,14 @@ fn clean(
             );
         }
         println!("NOT checked receipt fees or other derived fields");
-        println!("NOT checked era1 accumulator, finality, index sidecars");
+        println!("era1 accumulator: {era1_accumulator}");
+        for relic in &local_report.relics {
+            println!(
+                "relic {} era1 accumulator: {}",
+                relic.relic_index, relic.era1_accumulator
+            );
+        }
+        println!("NOT checked finality, index sidecars");
         println!("scope       requested manifests only; --after supplies predecessor context, not verified file coverage");
         if traces > 0 {
             println!(

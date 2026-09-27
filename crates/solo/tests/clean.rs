@@ -628,6 +628,64 @@ fn reconstructs_headers_and_rejects_resealed_field_tampering() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+#[test]
+fn era1_accumulator_is_recomputed_when_the_manifest_carries_one() {
+    let dir = scratch("era1-acc");
+    let paths = write_local_chain(&dir, 1);
+    let path = &paths[0];
+    reseal_first(path, |m| {
+        m.era1_accumulator_root = Some(Hash32::new([1; 32]))
+    });
+    assert_failed(
+        &solo(&[path], &["--files", "--json"]),
+        "no total_difficulty",
+    );
+
+    let mut rows = header_rows(0);
+    for (index, row) in rows.iter_mut().enumerate() {
+        row.total_difficulty = Some(minimal_u64(index as u64 + 1));
+    }
+    let root = Hash32::new(legacy_format::era1::accumulator_from_headers(&rows).unwrap());
+    let (bytes, entry) = legacy_parquet::headers::write_headers(&rows).unwrap();
+    std::fs::write(path.parent().unwrap().join(&entry.name), &bytes).unwrap();
+    reseal_first(path, |manifest| {
+        manifest.files.retain(|file| file.table == Table::Headers);
+        manifest.files[0] = entry;
+        manifest.era1_accumulator_root = Some(root);
+    });
+    let out = solo(&[path], &["--files", "--json"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(report["checks"]["era1_accumulator"], "pass");
+    assert_eq!(report["relic_checks"][0]["era1_accumulator"], "pass");
+    assert!(report["checks"]["header_hashes"]
+        .as_str()
+        .unwrap()
+        .starts_with("not checked"));
+
+    rows[3].total_difficulty = Some(vec![9]);
+    let (bytes, entry) = legacy_parquet::headers::write_headers(&rows).unwrap();
+    std::fs::write(path.parent().unwrap().join(&entry.name), &bytes).unwrap();
+    reseal_first(path, |manifest| {
+        manifest.files[0] = entry;
+        manifest.era1_accumulator_root = Some(root);
+    });
+    assert_failed(&solo(&[path], &["--files", "--json"]), "does not match");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+fn minimal_u64(value: u64) -> Vec<u8> {
+    let bytes = value.to_be_bytes();
+    match bytes.iter().position(|byte| *byte != 0) {
+        Some(start) => bytes[start..].to_vec(),
+        None => Vec::new(),
+    }
+}
+
 fn transaction_row() -> legacy_format::transactions::TransactionRow {
     legacy_format::transactions::TransactionRow {
         block_number: 8192,

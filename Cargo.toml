@@ -29,3 +29,8 @@ parquet = { version = "=59.3.0", default-features = false, features = ["arrow", 
 alloy-rlp = "0.3"
 sha3 = "0.10"
 alloy-trie = { version = "=0.9.5", default-features = false, features = ["std"] }
+sha2 = "0.10"
+snap = "1"
+k256 = { version = "0.13", features = ["ecdsa"] }
+toml = "0.8"
+roaring = "0.10"

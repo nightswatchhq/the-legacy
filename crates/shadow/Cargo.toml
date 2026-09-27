@@ -14,6 +14,17 @@ path = "src/main.rs"
 
 [dependencies]
 legacy-format.workspace = true
+legacy-parquet.workspace = true
+alloy-rlp.workspace = true
 clap.workspace = true
+hex.workspace = true
+k256.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha3.workspace = true
+snap.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+alloy-trie.workspace = true
+bytes.workspace = true

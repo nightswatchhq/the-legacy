@@ -12,6 +12,7 @@
 pub mod bloom;
 pub mod canonical;
 pub mod consistency;
+pub mod era1;
 pub mod error;
 pub mod ethereum;
 pub mod ethereum_receipts;

@@ -99,20 +99,91 @@ fn write_with_row_group_target(rows: &[LogRow], target: usize) -> Result<(Vec<u8
 /// Read a complete v1 logs table, rejecting incompatible schemas and malformed row order.
 /// File hashes and chain commitments must be checked separately by the caller.
 pub fn read_logs(bytes: Bytes) -> Result<Vec<LogRow>> {
-    let builder = ParquetRecordBatchReaderBuilder::try_new(bytes)?;
+    Ok(read_logs_grouped(bytes)?
+        .into_iter()
+        .map(|row| row.log)
+        .collect())
+}
+
+/// One log plus its position in this Parquet file. `group` and `row` follow the file's own
+/// framing, so they are meaningful for this byte string and not for another encoding of the
+/// same canonical rows.
+pub struct GroupedLog {
+    pub group: u32,
+    pub row: u32,
+    pub log: LogRow,
+}
+
+/// Decode every row group. The returned row numbers are the file order, starting at zero.
+pub fn read_logs_grouped(bytes: Bytes) -> Result<Vec<GroupedLog>> {
+    let builder = ParquetRecordBatchReaderBuilder::try_new(bytes.clone())?;
     check_schema(builder.schema())?;
-    let expected_rows = builder.metadata().file_metadata().num_rows();
-    let mut rows = Vec::new();
-    for batch in builder.build()? {
-        rows.extend(from_batch(&batch?)?);
+    let groups: Vec<usize> = (0..builder.metadata().num_row_groups()).collect();
+    if groups.is_empty() {
+        return Ok(Vec::new());
     }
-    if i64::try_from(rows.len()).ok() != Some(expected_rows) {
-        return Err(Error::Row(
-            "decoded row count differs from the file footer".into(),
-        ));
+    read_log_groups(bytes, &groups)
+}
+
+/// Decode only `groups`, in ascending group order. Does not re-check the whole-file content hash.
+pub fn read_log_groups(bytes: Bytes, groups: &[usize]) -> Result<Vec<GroupedLog>> {
+    if groups.is_empty() {
+        return Ok(Vec::new());
     }
-    validate_rows(&rows)?;
-    Ok(rows)
+    let mut wanted = groups.to_vec();
+    wanted.sort_unstable();
+    wanted.dedup();
+    let probe = ParquetRecordBatchReaderBuilder::try_new(bytes.clone())?;
+    check_schema(probe.schema())?;
+    let metadata = probe.metadata().clone();
+    let mut starts = Vec::with_capacity(metadata.num_row_groups());
+    let mut cursor = 0u32;
+    for group in metadata.row_groups() {
+        starts.push(cursor);
+        let count = u32::try_from(group.num_rows())
+            .map_err(|_| Error::Row("a log row group does not fit in u32".into()))?;
+        cursor = cursor
+            .checked_add(count)
+            .ok_or_else(|| Error::Row("log row indexes overflow u32".into()))?;
+    }
+    let mut out = Vec::new();
+    for group in wanted {
+        if group >= starts.len() {
+            return Err(Error::Row(format!("row group {group} is outside the file")));
+        }
+        let reader = ParquetRecordBatchReaderBuilder::try_new(bytes.clone())?
+            .with_row_groups(vec![group])
+            .build()?;
+        let mut row = starts[group];
+        for batch in reader {
+            for log in from_batch(&batch?)? {
+                let group_index = u32::try_from(group)
+                    .map_err(|_| Error::Row("row group index does not fit in u32".into()))?;
+                out.push(GroupedLog {
+                    group: group_index,
+                    row,
+                    log,
+                });
+                row = row
+                    .checked_add(1)
+                    .ok_or_else(|| Error::Row("log row indexes overflow u32".into()))?;
+            }
+        }
+        let end = starts.get(group + 1).copied().unwrap_or(cursor);
+        if row != end {
+            return Err(Error::Row(
+                "decoded row group length differs from the footer".into(),
+            ));
+        }
+    }
+    validate_rows(&out.iter().map(|row| row.log.clone()).collect::<Vec<_>>())?;
+    Ok(out)
+}
+
+/// Same writer as [`write_logs`], with an explicit canonical-byte row-group target.
+/// Tests use a small target to force more than one group. Sealing uses [`write_logs`].
+pub fn write_logs_with_target(rows: &[LogRow], target: usize) -> Result<(Vec<u8>, FileEntry)> {
+    write_with_row_group_target(rows, target)
 }
 
 fn to_batch(rows: &[LogRow]) -> Result<RecordBatch> {
@@ -460,6 +531,19 @@ mod tests {
             read_logs(encode_batch(&malformed).into()),
             Err(Error::Schema(_))
         ));
+    }
+
+    #[test]
+    fn a_single_row_group_can_be_decoded_on_its_own() {
+        let rows = fixtures();
+        let (bytes, entry) = write_with_row_group_target(&rows, 1).unwrap();
+        assert_eq!(entry.row_groups, 5);
+        let all = read_logs_grouped(Bytes::from(bytes.clone())).unwrap();
+        assert_eq!(all.len(), 5);
+        let only = read_log_groups(Bytes::from(bytes), &[all[3].group as usize]).unwrap();
+        assert_eq!(only.len(), 1);
+        assert_eq!(only[0].row, all[3].row);
+        assert_eq!(only[0].log, rows[3]);
     }
 
     #[test]

@@ -51,6 +51,7 @@ pub struct RelicReport {
     pub transactions_root: &'static str,
     pub receipts_root: &'static str,
     pub withdrawals_root: &'static str,
+    pub era1_accumulator: &'static str,
 }
 
 pub fn summarize(
@@ -204,6 +205,7 @@ pub fn check(
             } else {
                 "not checked (unsupported chain gas profile)"
             },
+            era1_accumulator: "not checked (headers absent)",
         };
         let context = |error| format!("relic {}: {error}", manifest.relic_index());
         if let (Some(tx), Some(receipts)) = (&transactions, &receipts) {
@@ -248,6 +250,20 @@ pub fn check(
                     .map_err(|error| format!("relic {}: {error}", manifest.relic_index()))?;
                 relational.withdrawals_root = PASS;
             }
+        }
+        if let Some(root) = manifest.era1_accumulator_root {
+            let Some(headers) = &headers else {
+                return Err(format!(
+                    "relic {} carries an era1 accumulator root but no headers table",
+                    manifest.relic_index()
+                )
+                .into());
+            };
+            legacy_format::era1::verify(headers, root)
+                .map_err(|error| format!("relic {}: {error}", manifest.relic_index()))?;
+            relational.era1_accumulator = PASS;
+        } else if headers.is_some() {
+            relational.era1_accumulator = "not checked (manifest has no era1_accumulator_root)";
         }
         reports.relics.push(relational);
     }

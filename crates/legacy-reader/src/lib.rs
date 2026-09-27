@@ -49,6 +49,14 @@ pub enum Error {
     WrongRows { relic: u64, expected: &'static str },
 }
 
+/// Logs from one relic, with this file's row-group framing.
+pub struct GroupedLogs {
+    pub relic: u64,
+    pub block_start: u64,
+    pub block_end: u64,
+    pub rows: Vec<legacy_parquet::logs::GroupedLog>,
+}
+
 struct LocalRelic {
     manifest: Manifest,
     directory: PathBuf,
@@ -97,6 +105,10 @@ impl Corpus {
         self.relics
             .last()
             .map(|relic| relic.manifest.block_range.end)
+    }
+
+    pub fn manifests(&self) -> impl Iterator<Item = &Manifest> {
+        self.relics.iter().map(|relic| &relic.manifest)
     }
 
     /// Read logs intersecting `range`. A missing logs table is an error rather than an assertion
@@ -209,6 +221,130 @@ impl Corpus {
             );
         }
         Ok(out)
+    }
+
+    /// Logs with their Parquet row-group and row numbers, for relics that have a logs file.
+    ///
+    /// The file BLAKE3 and the canonical content hash are both checked. Row-group numbers describe
+    /// this file's framing, not the canonical rows.
+    pub fn grouped_logs(&self) -> Result<Vec<GroupedLogs>, Error> {
+        let mut out = Vec::new();
+        for relic in &self.relics {
+            let Some(entry) = relic
+                .manifest
+                .files
+                .iter()
+                .find(|entry| entry.table == Table::Logs)
+            else {
+                continue;
+            };
+            let bytes = self.log_bytes(relic, entry)?;
+            let grouped =
+                legacy_parquet::logs::read_logs_grouped(bytes.into()).map_err(|source| {
+                    Error::TableVerify {
+                        relic: relic.manifest.relic_index(),
+                        table: Table::Logs,
+                        source,
+                    }
+                })?;
+            let plain: Vec<_> = grouped.iter().map(|row| row.log.clone()).collect();
+            let hash =
+                legacy_format::logs::content_hash(&plain).map_err(|error| Error::TableVerify {
+                    relic: relic.manifest.relic_index(),
+                    table: Table::Logs,
+                    source: legacy_parquet::Error::Verification(error.to_string()),
+                })?;
+            if hash != entry.content_hash {
+                return Err(Error::TableVerify {
+                    relic: relic.manifest.relic_index(),
+                    table: Table::Logs,
+                    source: legacy_parquet::Error::Verification(
+                        "content hash does not match the manifest".into(),
+                    ),
+                });
+            }
+            out.push(GroupedLogs {
+                relic: relic.manifest.relic_index(),
+                block_start: relic.manifest.block_range.start,
+                block_end: relic.manifest.block_range.end,
+                rows: grouped,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Decode selected log row groups after the file BLAKE3 matches the manifest.
+    ///
+    /// The content hash is not recomputed: a partial decode cannot. The byte hash binds these
+    /// bytes to the manifest entry whose content hash was checked when the log index was built.
+    pub fn logs_in_groups(
+        &self,
+        relic_index: u64,
+        groups: &[u32],
+    ) -> Result<Vec<legacy_parquet::logs::GroupedLog>, Error> {
+        let relic = self
+            .relics
+            .iter()
+            .find(|relic| relic.manifest.relic_index() == relic_index)
+            .ok_or_else(|| Error::MissingTable {
+                relic: relic_index,
+                table: Table::Logs,
+            })?;
+        let entry = relic
+            .manifest
+            .files
+            .iter()
+            .find(|entry| entry.table == Table::Logs)
+            .ok_or(Error::MissingTable {
+                relic: relic_index,
+                table: Table::Logs,
+            })?;
+        if groups.is_empty() {
+            self.log_bytes(relic, entry)?;
+            return Ok(Vec::new());
+        }
+        let bytes = self.log_bytes(relic, entry)?;
+        let wanted: Vec<usize> = groups
+            .iter()
+            .map(|group| usize::try_from(*group))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| Error::TableVerify {
+                relic: relic_index,
+                table: Table::Logs,
+                source: legacy_parquet::Error::Verification("row group index overflow".into()),
+            })?;
+        legacy_parquet::logs::read_log_groups(bytes.into(), &wanted).map_err(|source| {
+            Error::TableVerify {
+                relic: relic_index,
+                table: Table::Logs,
+                source,
+            }
+        })
+    }
+
+    fn log_bytes(
+        &self,
+        relic: &LocalRelic,
+        entry: &legacy_format::manifest::FileEntry,
+    ) -> Result<Vec<u8>, Error> {
+        let bytes =
+            std::fs::read(relic.directory.join(&entry.name)).map_err(|source| Error::TableIo {
+                relic: relic.manifest.relic_index(),
+                table: Table::Logs,
+                source,
+            })?;
+        if bytes.len() as u64 != entry.byte_size
+            || legacy_format::hash::blake3(&bytes) != entry.blake3
+        {
+            return Err(Error::TableVerify {
+                relic: relic.manifest.relic_index(),
+                table: Table::Logs,
+                source: legacy_parquet::Error::Verification(
+                    "logs file bytes do not match the manifest".into(),
+                ),
+            });
+        }
+        Ok(bytes)
     }
 
     fn overlapping<'a>(

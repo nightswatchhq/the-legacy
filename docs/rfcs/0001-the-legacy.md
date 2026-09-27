@@ -747,7 +747,17 @@ supported. Layout is selected by field presence, not by the mainnet fork activat
 `consensus_rules` explicitly reports that schedule and other consensus rules as unchecked.
 Hash reconstruction proves consistency of these preimages and their links, not that they belong
 to Ethereum's canonical chain. A synthetic hash-consistent chain still passes without a trusted
-checkpoint, era1 accumulator or finality check.
+checkpoint or finality check. An era1 accumulator root is checked only when the manifest
+carries one.
+
+When `era1_accumulator_root` is present and headers were read, the cleaner recomputes
+`hash_tree_root` of `List[HeaderRecord, 8192]` from each header's `block_hash` and
+`total_difficulty`. The row stores total difficulty as a minimal big-endian magnitude; the SSZ
+uint256 is 32-byte little-endian. A header with no total difficulty fails the run. A manifest
+without the root reports **not checked**. This does not reconstruct header RLP, apply a merge
+schedule, or prove the records are a published era1 accumulator. It checks the stored pairs
+against the root the manifest claims. Header-hash reconstruction remains the separate chain
+ID 1 check.
 
 `--after <manifest>` provides predecessor pact context for a continuation. Its table files are
 not checked unless they are part of the requested manifest run. The report names that scope.
@@ -755,8 +765,9 @@ Transaction envelope semantics (including raw/structured agreement and transacti
 signature validity/sender recovery are separately reported as **not checked**. Receipt fees
 and other derived fields still report **not checked** under `receipt_consistency`.
 Execution gas accounting has its own `receipt_gas` result.
-Other table completeness, consensus rules, era1 accumulators, finality, index correctness,
-producer signatures and checkpoint anchoring remain unimplemented. Transaction-root checking
+Other table completeness, consensus rules, finality, index correctness,
+producer signatures and checkpoint anchoring remain unimplemented. The era1 accumulator
+check above runs only when the manifest carries a root. Transaction-root checking
 currently requires raw envelopes, and receipt and withdrawal-root checking have the chain ID 1
 profiles described above. The example in §10.6 is the intended full report, not current executable
 output.

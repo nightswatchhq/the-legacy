@@ -37,14 +37,18 @@ anything yet.** Precisely:
 | Canonical row primitives and headers/transactions/receipts/logs/withdrawals content hashing | implemented, golden byte vectors |
 | `solo clean` (manifest structure, relic linkage, pact chain) | implemented; `--files` adds local integrity checks |
 | Headers, transactions, receipts, logs and withdrawals Parquet codecs | implemented, local synthetic round trips; no sealer |
-| Traces Parquet codec, index sidecars | not started |
+| Log address/topic bitmaps | rebuilt in memory for `eth_getLogs`; not manifest-committed |
+| Traces Parquet codec, tx/block-hash sidecars | not started |
 | Ethereum receipt trie-leaf encoding | implemented for legacy and types 1..=4; independent synthetic vectors |
 | Ethereum transaction trie roots | chain ID 1 local cleaner check from stored raw envelopes |
 | Ethereum receipts trie roots | chain ID 1 local cleaner check; header trust remains separate |
 | Ethereum withdrawal trie roots | chain ID 1 local cleaner check for EIP-4895 rows |
 | Checkpoint anchoring | not started |
 | `legacy-reader` | local, manifest-verified sealed core-table scans; object storage and indexed queries not started |
-| `solo serve`, all six Shadow sources | not started |
+| era1 Shadow | seals one aligned 8192-block era1 file; partial and unaligned files are refused |
+| era1 accumulator | recomputed when the manifest carries `era1_accumulator_root` and headers are read |
+| `solo serve` | sealed-only JSON-RPC on a local corpus; no upstream; log bitmaps are process-local |
+| the other five Shadow sources | not started |
 
 `solo clean` says out loud which checks it performed and which it did not, and will keep doing so
 until each one is real. A verification report that implies more than it checked is worse than no
@@ -75,6 +79,10 @@ checks prove agreement among supplied bytes, not canonical-chain membership, fie
 table completeness.
 With headers and withdrawals present, it rebuilds EIP-4895 withdrawal tries, using a withdrawal's
 position in the block as the trie key and its global index as part of the RLP value.
+When a manifest carries `era1_accumulator_root` and headers were read, it recomputes the era1
+SSZ accumulator from those headers' block hashes and total difficulties. A missing root stays
+unchecked. That comparison does not reconstruct header RLP and does not decide whether the
+range is pre-merge.
 
 ## Try it
 
@@ -112,6 +120,36 @@ block       20086783
 relic       2451  (002451)
 blocks      20078592..=20086783
 prefix      legacy/v1/1/relics/002451
+```
+
+```sh
+cargo run -p shadow -- seal --source era1 --file path/to/00000.era1 --from 0 --to 8191 --out path/to/relic
+```
+
+The file must be one complete 8192-block epoch aligned to a relic boundary. Anything shorter,
+including the partial era that stops at the merge, is refused and nothing is written. A relic
+after genesis also needs `--after path/to/predecessor/manifest.json`. The command reads only
+that file. It does not contact a network and it does not publish the relic.
+
+Serve that directory. The process admits the corpus only after the same file checks as
+`solo clean --files`, then answers sealed history. There is no upstream. `latest`, `safe` and
+`finalized` are the sealed head. `eth_getLogs` uses in-memory address and topic bitmaps rebuilt from the logs file. Those bitmaps
+are not in the manifest. A topic hit still decodes the matching row groups, and the rows are
+checked again. Transaction and block hash lookups read whole relic files. A range above that
+head, or past the configured log limits, is an error, not a shorter answer.
+
+```toml
+bind = "127.0.0.1:8545"
+manifests = ["path/to/relic/manifest.json"]
+
+[limits]
+getlogs_max_blocks = 100000
+getlogs_max_results = 100000
+batch_max = 1000
+```
+
+```sh
+cargo run -p solo -- serve --config solo.toml
 ```
 
 ```sh
